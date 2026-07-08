@@ -6,9 +6,14 @@ CREATE TABLE IF NOT EXISTS filials (
     id          SERIAL PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE,     -- "Chilonzor filiali"
     thread_id   INTEGER,                  -- Telegram guruhdagi forum-topic id (avtomatik to'ldiriladi)
+    sort_order  INTEGER NOT NULL DEFAULT 0,
     is_active   BOOLEAN NOT NULL DEFAULT TRUE,
     created_at  TIMESTAMP NOT NULL DEFAULT now()
 );
+
+-- Eski bazalarda `sort_order` ustuni bo'lmasligi mumkin (CREATE TABLE IF NOT
+-- EXISTS mavjud jadvalni o'zgartirmaydi) — shu bilan xavfsiz qo'shamiz.
+ALTER TABLE filials ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS sections (
     id          SERIAL PRIMARY KEY,
@@ -105,4 +110,42 @@ INSERT INTO sections (name, sort_order, is_active) VALUES
     ('Фото доставочных помещений', 6, TRUE),
     ('Фото сотрудников после пятиминутки и командной доски (только утром)', 7, TRUE),
     ('Фото чек-листов: Чек-лист Чистоты, Чек-лист МС, КЛН, Бланк уборки ГСУ (11:00, 15:00, 18:00, 21:00, Закрытие смены)', 8, TRUE)
+ON CONFLICT (name) DO UPDATE SET sort_order = EXCLUDED.sort_order, is_active = TRUE;
+
+-- ============================================================
+--  Filiallarni FAQAT quyidagi ro'yxat bilan cheklash
+--  (idempotent migratsiya — har ishga tushishda xavfsiz qayta bajariladi)
+-- ============================================================
+
+-- Ro'yxatda YO'Q bo'lgan har qanday eski filial faolsizlantiriladi —
+-- o'chirilmaydi, chunki unga bog'liq eski hisobotlar/thread_id bo'lishi
+-- mumkin, lekin ilovada endi ko'rinmaydi.
+UPDATE filials SET is_active = FALSE
+WHERE name NOT IN (
+    'Scopus Mall', 'City Mall', 'Alfraganus', 'Beruniy', 'Novza', 'Anhor',
+    'Sergeli', 'Tuzel', 'Compass Mall', 'Navruz Mall', 'Samarqand Darvoza',
+    'C1 Street', 'C1 Wok', 'Eco', 'Yunusabad Gallery', 'Glinka Wok', 'Chilonzor 20'
+);
+
+-- Kerakli filiallar mavjud, faol va bergan tartibingizda bo'lishini
+-- ta'minlaymiz. `thread_id` ga tegilmaydi — mavjud filialning Telegram
+-- topici saqlanib qoladi.
+INSERT INTO filials (name, sort_order, is_active) VALUES
+    ('Scopus Mall', 1, TRUE),
+    ('City Mall', 2, TRUE),
+    ('Alfraganus', 3, TRUE),
+    ('Beruniy', 4, TRUE),
+    ('Novza', 5, TRUE),
+    ('Anhor', 6, TRUE),
+    ('Sergeli', 7, TRUE),
+    ('Tuzel', 8, TRUE),
+    ('Compass Mall', 9, TRUE),
+    ('Navruz Mall', 10, TRUE),
+    ('Samarqand Darvoza', 11, TRUE),
+    ('C1 Street', 12, TRUE),
+    ('C1 Wok', 13, TRUE),
+    ('Eco', 14, TRUE),
+    ('Yunusabad Gallery', 15, TRUE),
+    ('Glinka Wok', 16, TRUE),
+    ('Chilonzor 20', 17, TRUE)
 ON CONFLICT (name) DO UPDATE SET sort_order = EXCLUDED.sort_order, is_active = TRUE;
