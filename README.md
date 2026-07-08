@@ -19,10 +19,6 @@ mini app (index.html/app.js)  --(HTTPS, multipart/form-data)-->  FastAPI backend
 - **Frontend** (`frontend/`) — sof HTML/JS, Telegram WebApp SDK orqali ishlaydi.
 - **Backend** (`backend/app.py`) — FastAPI, `initData`ni tekshiradi, rasmlarni
   qabul qilib, tegishli filial mavzusiga (`message_thread_id`) yuboradi.
-- **`bot_listener.py`** — mehmonlarning telefon raqamini Telegramning tabiiy
-  "share contact" tugmasi orqali ushlab, bazaga yozadi (agar sizda allaqachon
-  aiogram/PTB bot ishlab turgan bo'lsa, shu faylni ishlatmang — o'sha botga
-  bitta `contact` handler qo'shsangiz yetarli, fayl ichida namuna bor).
 
 ## O'rnatish
 
@@ -47,11 +43,6 @@ psql "$DATABASE_URL" -f schema.sql   # jadvallarni yaratish
 uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-Alohida terminalda (agar boshqa bot ishlamayotgan bo'lsa):
-```bash
-python bot_listener.py
-```
-
 Productionda backendni HTTPS ortida joylashtiring (nginx + Let's Encrypt yoki
 Railway/Render kabi xizmat) — Telegram WebApp faqat HTTPS bilan ishlaydi.
 
@@ -72,17 +63,14 @@ INSERT INTO filials (name) VALUES ('Chilonzor filiali'), ('Yunusobod filiali');
 
 ## Oqim (user flow)
 
-1. **Rol tanlash** — "Filial xodimi" / "Mehmon"
-2. **(Mehmon bo'lsa)** telefon raqami so'raladi — `Telegram.WebApp.requestContact()`
-   orqali, raqamning o'zi bot API orqali xabar sifatida keladi va bazaga yoziladi
-3. **Filial tanlash** — ro'yxatdan bosiladi
-4. **Bo'limlar** — har biri uchun kamera orqali rasm + ixtiyoriy izoh;
+1. **Filial tanlash** — ro'yxatdan bosiladi
+2. **Bo'limlar** — har biri uchun kamera orqali rasm + ixtiyoriy izoh;
    progress-bar nechta bo'lim to'ldirilganini ko'rsatadi
-5. Hammasi to'lganda pastda Telegram **MainButton "✅ Yuborish"** chiqadi
-6. Bosilganda barcha rasmlar bitta so'rovda backendga yuboriladi →
+3. Hammasi to'lganda pastda Telegram **MainButton "✅ Yuborish"** chiqadi
+4. Bosilganda barcha rasmlar bitta so'rovda backendga yuboriladi →
    backend har birini tegishli filial-topicga jo'natadi, izoh + filial nomi +
-   vaqt + kim yuborgani (xodim/mehmon, F.I.Sh.) caption sifatida qo'shiladi
-7. Muvaffaqiyat ekrani ko'rsatiladi
+   vaqt + yuborgan foydalanuvchining F.I.Sh. caption sifatida qo'shiladi
+5. Muvaffaqiyat ekrani ko'rsatiladi
 
 ## Mavjud loyihangizga integratsiya bo'yicha eslatma
 
@@ -91,12 +79,9 @@ mavjud ekan. Bu MVP'ni ikki xil integratsiya qilish mumkin:
 
 - **A variant (tavsiya etiladi):** shu backend'ni alohida mikroservis sifatida
   ishga tushirasiz, faqat `BOT_TOKEN` va `DATABASE_URL`ni umumiy qilasiz.
-  `bot_listener.py`ni ishlatmasdan, mavjud `bot.py`dagi contact-handleringizga
-  README yuqorisidagi "INTEGRATSIYA" qismini qo'shasiz.
 - **B variant:** `app.py`dagi funksiyalarni (`telegram_utils.py`,
   `db.py`) to'g'ridan-to'g'ri `bot.py` loyihangiz ichiga ko'chirib,
-  Google Sheets yozuvini ham `submit_photo` funksiyasiga qo'shib yuborasiz
-  (masalan `KIMDAN` ustuniga `role` qiymatini yozish).
+  Google Sheets yozuvini ham `submit_photo` funksiyasiga qo'shib yuborasiz.
 
 ## GitHub + Railway orqali deploy qilish
 
@@ -162,19 +147,7 @@ git push -u origin main
 > faqat `frontend/` papkasini alohida branch (`gh-pages`) yoki repo qilib
 > yuklaysiz.
 
-### 5-qadam — kontakt-listener uchun uchinchi servis (ixtiyoriy)
-
-Agar mavjud botingizda contact-handler hali yo'q bo'lsa, `bot_listener.py`ni
-alohida Railway servisi sifatida ishga tushiring:
-
-1. Yana bir **+ New → GitHub Repo** (root directory: `backend`).
-2. **Settings → Deploy → Custom Start Command**: `python bot_listener.py`
-3. Xuddi shu `BOT_TOKEN` va `DATABASE_URL` o'zgaruvchilarini qo'shing.
-
-> Bu servisda web-porti kerak emas (long polling), shuning uchun
-> **Networking → Generate Domain** bosish shart emas.
-
-### 6-qadam — BotFather'da mini appni ulash
+### 5-qadam — BotFather'da mini appni ulash
 
 `@BotFather` → botingiz → **Bot Settings → Menu Button** (yoki `/newapp`) →
 4-qadamdagi frontend domenini (`https://yyyy.up.railway.app`) kiriting.
