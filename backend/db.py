@@ -67,43 +67,16 @@ async def list_active_sections():
     return [dict(r) for r in rows]
 
 
-# ---------- Kontaktlar (mehmonlar uchun telefon) ----------
-
-async def get_contact(telegram_user_id: int):
-    pool = await get_pool()
-    row = await pool.fetchrow(
-        "SELECT phone, full_name FROM user_contacts WHERE telegram_user_id = $1",
-        telegram_user_id,
-    )
-    return dict(row) if row else None
-
-
-async def upsert_contact(telegram_user_id: int, phone: str, full_name: str | None):
-    pool = await get_pool()
-    await pool.execute(
-        """
-        INSERT INTO user_contacts (telegram_user_id, phone, full_name, updated_at)
-        VALUES ($1, $2, $3, now())
-        ON CONFLICT (telegram_user_id)
-        DO UPDATE SET phone = EXCLUDED.phone,
-                       full_name = COALESCE(EXCLUDED.full_name, user_contacts.full_name),
-                       updated_at = now()
-        """,
-        telegram_user_id, phone, full_name,
-    )
-
-
 # ---------- Submissionlar ----------
 
-async def create_submission(filial_id: int, telegram_user_id: int, full_name: str,
-                             phone: str | None, role: str) -> int:
+async def create_submission(filial_id: int, telegram_user_id: int, full_name: str) -> int:
     pool = await get_pool()
     row = await pool.fetchrow(
         """
-        INSERT INTO submissions (filial_id, telegram_user_id, full_name, phone, role)
-        VALUES ($1, $2, $3, $4, $5) RETURNING id
+        INSERT INTO submissions (filial_id, telegram_user_id, full_name)
+        VALUES ($1, $2, $3) RETURNING id
         """,
-        filial_id, telegram_user_id, full_name, phone, role,
+        filial_id, telegram_user_id, full_name,
     )
     return row["id"]
 
