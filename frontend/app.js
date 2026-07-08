@@ -2,7 +2,7 @@
 //  Filial Feedback Mini App — frontend logikasi
 // ============================================================
 
-const API_BASE = "https://rgc.up.railway.app/";// <-- backend manzilini shu yerga qo'ying
+const API_BASE = "https://rgcsw.up.railway.app";// <-- backend manzilini shu yerga qo'ying
 
 const tg = window.Telegram.WebApp;
 tg.ready();
