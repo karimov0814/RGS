@@ -26,13 +26,8 @@ const TRANSLATIONS = {
 
     sections_subtitle: "Har bir chek-list turi uchun qaysi bo'lim (mavzu) so'ralishini shu yerdan sozlang.",
     sections_add_title: "Yangi bo'lim qo'shish",
+    sections_add_hint: "Nomni joriy tanlangan tilda kiriting — tizim boshqa 2 tilga avtomatik tarjima qiladi.",
     sections_name_placeholder: "Bo'lim nomi (masalan: Fasad fotosi)",
-    sections_name_uz_placeholder: "Nomi — o'zbekcha",
-    sections_name_ru_placeholder: "Nomi — ruscha",
-    sections_name_en_placeholder: "Nomi — inglizcha",
-    sections_name_uz_label: "Bo'lim nomi — O'zbekcha",
-    sections_name_ru_label: "Bo'lim nomi — Ruscha",
-    sections_name_en_label: "Bo'lim nomi — Inglizcha",
 
     report_subtitle: "Superadmin sifatida ham oddiy hisobot yubora olasiz.",
     report_send_btn: "Hisobot yuborish",
@@ -149,13 +144,8 @@ const TRANSLATIONS = {
 
     sections_subtitle: "Здесь настройте, какие разделы (темы) запрашиваются для каждого типа чек-листа.",
     sections_add_title: "Добавить новый раздел",
+    sections_add_hint: "Введите название на текущем выбранном языке — система автоматически переведёт на остальные 2 языка.",
     sections_name_placeholder: "Название раздела (например: Фото фасада)",
-    sections_name_uz_placeholder: "Название — узбекский",
-    sections_name_ru_placeholder: "Название — русский",
-    sections_name_en_placeholder: "Название — английский",
-    sections_name_uz_label: "Название раздела — Узбекский",
-    sections_name_ru_label: "Название раздела — Русский",
-    sections_name_en_label: "Название раздела — Английский",
 
     report_subtitle: "Вы можете отправить обычный отчёт даже как супер-администратор.",
     report_send_btn: "Отправить отчёт",
@@ -272,13 +262,8 @@ const TRANSLATIONS = {
 
     sections_subtitle: "Configure which sections (topics) are requested for each checklist type here.",
     sections_add_title: "Add new section",
+    sections_add_hint: "Enter the name in the currently selected language — the system will automatically translate it into the other 2 languages.",
     sections_name_placeholder: "Section name (e.g. Facade photo)",
-    sections_name_uz_placeholder: "Name — Uzbek",
-    sections_name_ru_placeholder: "Name — Russian",
-    sections_name_en_placeholder: "Name — English",
-    sections_name_uz_label: "Section name — Uzbek",
-    sections_name_ru_label: "Section name — Russian",
-    sections_name_en_label: "Section name — English",
 
     report_subtitle: "As a superadmin, you can also submit a regular report.",
     report_send_btn: "Submit report",

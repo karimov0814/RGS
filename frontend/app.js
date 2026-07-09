@@ -180,6 +180,36 @@ function showPrompt({ title, fields, confirmText }) {
 // ---------- 0. Ruxsat tekshiruvi + 1. Filial tanlash (ilova ochilishi bilan) ----------
 state.isSuperadmin = false;
 
+function renderFilialList(filials) {
+  state.filials = filials;
+  const list = document.getElementById("filial-list");
+  list.innerHTML = "";
+  filials.forEach((f) => {
+    const el = document.createElement("div");
+    el.className = "filial-item";
+    el.innerHTML = `<span>${f.name}</span><span class="arrow">${iconMarkup("chevron")}</span>`;
+    el.addEventListener("click", () => selectFilial(f));
+    list.appendChild(el);
+  });
+}
+
+// Admin panelda yangi filial qo'shilgandan/o'chirilgandan/tahrirlangandan
+// keyin "Hisobot yuborish" orqali filial tanlash ekraniga o'tilsa, ro'yxat
+// ilova birinchi ochilgandagi ESKI holatda qolib ketmasin uchun — shu
+// yerda bazadan QAYTA so'raladi.
+async function refreshFilialList() {
+  try {
+    const res = await fetch(`${API_BASE}/api/config?init_data=${encodeURIComponent(initData)}&lang=${getLang()}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    state.checklistTypes = data.checklist_types;
+    renderFilialList(data.filials);
+  } catch (_) {
+    // Jim ichida muvaffaqiyatsiz bo'lsa — eskirgan ro'yxat ko'rsatiladi,
+    // lekin ilova ishlashda davom etadi.
+  }
+}
+
 async function loadFilials() {
   showLoading(t("loading_default"));
   try {
@@ -197,15 +227,7 @@ async function loadFilials() {
     state.checklistTypes = data.checklist_types;
     state.isSuperadmin = !!data.is_superadmin;
 
-    const list = document.getElementById("filial-list");
-    list.innerHTML = "";
-    data.filials.forEach((f) => {
-      const el = document.createElement("div");
-      el.className = "filial-item";
-      el.innerHTML = `<span>${f.name}</span><span class="arrow">${iconMarkup("chevron")}</span>`;
-      el.addEventListener("click", () => selectFilial(f));
-      list.appendChild(el);
-    });
+    renderFilialList(data.filials);
 
     hideLoading();
 
@@ -256,8 +278,9 @@ function renderChecklistTypes() {
   });
 }
 
-document.getElementById("btn-back-to-filial").addEventListener("click", () => {
+document.getElementById("btn-back-to-filial").addEventListener("click", async () => {
   showScreen("screen-filial");
+  await refreshFilialList();
 });
 
 // Til almashtirilganda ekranda hozir ko'rinib turgan chek-list turlari /
@@ -502,7 +525,10 @@ document.querySelectorAll(".admin-tab-btn").forEach((btn) => {
 document.getElementById("btn-back-to-admin").addEventListener("click", () => {
   showScreen("screen-admin");
 });
-document.getElementById("btn-goto-report").addEventListener("click", () => {
+document.getElementById("btn-goto-report").addEventListener("click", async () => {
+  showLoading(t("loading_default"));
+  await refreshFilialList();
+  hideLoading();
   showScreen("screen-filial");
 });
 
@@ -857,7 +883,6 @@ async function loadAdminSections() {
       el.innerHTML = `
         <div class="admin-list-main">
           <div class="admin-list-title">${pickLocalized(s)} ${s.is_active ? "" : `<span class="badge-text">${t("inactive_badge")}</span>`}</div>
-          <div class="admin-list-sub">UZ: ${s.name_uz || "—"} · RU: ${s.name_ru || "—"} · EN: ${s.name_en || "—"}</div>
         </div>
         <div class="admin-list-actions">
           <button class="icon-btn active-toggle ${s.is_active ? "" : "is-off"}" data-action="toggle" aria-label="${s.is_active ? t("toggle_deactivate_label") : t("toggle_activate_label")}">${iconMarkup(s.is_active ? "eye" : "eyeOff")}</button>
@@ -876,13 +901,9 @@ async function loadAdminSections() {
 }
 
 document.getElementById("btn-add-section").addEventListener("click", async () => {
-  const nameUzInput = document.getElementById("new-section-name-uz");
-  const nameRuInput = document.getElementById("new-section-name-ru");
-  const nameEnInput = document.getElementById("new-section-name-en");
-  const nameUz = nameUzInput.value.trim();
-  const nameRu = nameRuInput.value.trim();
-  const nameEn = nameEnInput.value.trim();
-  if (!nameUz && !nameRu && !nameEn) {
+  const nameInput = document.getElementById("new-section-name");
+  const name = nameInput.value.trim();
+  if (!name) {
     await showAlert(t("sections_name_required"));
     return;
   }
@@ -896,15 +917,12 @@ document.getElementById("btn-add-section").addEventListener("click", async () =>
     await adminFetch("/api/admin/sections", {
       method: "POST",
       body: adminForm({
-        name_uz: nameUz,
-        name_ru: nameRu,
-        name_en: nameEn,
+        name,
+        lang: getLang(),
         checklist_type_id: adminSelectedChecklistTypeId,
       }),
     });
-    nameUzInput.value = "";
-    nameRuInput.value = "";
-    nameEnInput.value = "";
+    nameInput.value = "";
     await loadAdminSections();
   } catch (e) {
     await showAlert(t("error_prefix") + e.message);
@@ -917,28 +935,15 @@ async function editSection(s) {
   const result = await showPrompt({
     title: t("sections_edit_title"),
     confirmText: t("btn_save"),
-    fields: [
-      { id: "name_uz", label: t("sections_name_uz_label"), value: s.name_uz || "" },
-      { id: "name_ru", label: t("sections_name_ru_label"), value: s.name_ru || "" },
-      { id: "name_en", label: t("sections_name_en_label"), value: s.name_en || "" },
-    ],
+    fields: [{ id: "name", label: t("sections_name_label"), value: pickLocalized(s) }],
   });
-  if (!result) return;
-  if (!result.name_uz && !result.name_ru && !result.name_en) {
-    await showAlert(t("sections_name_required"));
-    return;
-  }
+  if (!result || !result.name) return;
 
   showLoading(t("loading_saving"));
   try {
     await adminFetch(`/api/admin/sections/${s.id}`, {
       method: "PUT",
-      body: adminForm({
-        name_uz: result.name_uz,
-        name_ru: result.name_ru,
-        name_en: result.name_en,
-        is_active: s.is_active,
-      }),
+      body: adminForm({ name: result.name, lang: getLang(), is_active: s.is_active }),
     });
     await loadAdminSections();
   } catch (e) {

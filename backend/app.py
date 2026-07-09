@@ -27,6 +27,7 @@ import asyncpg
 import db
 import telegram_utils as tg
 import bot_listener
+import translate_utils
 
 app = FastAPI(title="Filial Feedback Mini App")
 
@@ -468,18 +469,23 @@ async def admin_list_sections(init_data: str, checklist_type_id: int):
 async def admin_add_section(
     init_data: str = Form(...),
     checklist_type_id: int = Form(...),
-    name_uz: str = Form(""),
-    name_ru: str = Form(""),
-    name_en: str = Form(""),
+    name: str = Form(...),
+    lang: str = Form("uz"),
 ):
+    """Superadmin bo'lim nomini FAQAT o'zi tanlagan interfeys tilida
+    (`lang`) kiritadi — qolgan ikkita til uchun nom avtomatik tarjima
+    qilinadi, alohida-alohida kiritish shart emas."""
     await _check_superadmin(init_data)
-    name_uz, name_ru, name_en = name_uz.strip(), name_ru.strip(), name_en.strip()
-    if not (name_uz or name_ru or name_en):
-        raise HTTPException(status_code=400, detail="Kamida bitta til uchun bo'lim nomini kiriting")
+    lang = _norm_lang(lang)
+    name = name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Bo'lim nomini kiriting")
     checklist_type = await db.get_checklist_type(checklist_type_id)
     if not checklist_type:
         raise HTTPException(status_code=404, detail="Chek-list turi topilmadi")
-    section = await db.create_section(checklist_type_id, name_uz, name_ru, name_en)
+
+    names = await translate_utils.translate_to_all_langs(name, lang)
+    section = await db.create_section(checklist_type_id, names["uz"], names["ru"], names["en"])
     return {"ok": True, "section": section}
 
 
@@ -487,16 +493,21 @@ async def admin_add_section(
 async def admin_update_section(
     section_id: int,
     init_data: str = Form(...),
-    name_uz: str = Form(""),
-    name_ru: str = Form(""),
-    name_en: str = Form(""),
+    name: str = Form(...),
+    lang: str = Form("uz"),
     is_active: bool = Form(True),
 ):
+    """Bo'lim nomi tahrirlanganda ham xuddi shunday — admin faqat bitta
+    tilda (`lang`) yangi nomni kiritadi, qolgan ikkita til shu nomdan
+    qayta tarjima qilinib yangilanadi."""
     await _check_superadmin(init_data)
-    name_uz, name_ru, name_en = name_uz.strip(), name_ru.strip(), name_en.strip()
-    if not (name_uz or name_ru or name_en):
-        raise HTTPException(status_code=400, detail="Kamida bitta til uchun bo'lim nomini kiriting")
-    section = await db.update_section(section_id, name_uz, name_ru, name_en, is_active)
+    lang = _norm_lang(lang)
+    name = name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Bo'lim nomini kiriting")
+
+    names = await translate_utils.translate_to_all_langs(name, lang)
+    section = await db.update_section(section_id, names["uz"], names["ru"], names["en"], is_active)
     if not section:
         raise HTTPException(status_code=404, detail="Bo'lim topilmadi")
     return {"ok": True, "section": section}
