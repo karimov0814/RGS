@@ -146,11 +146,31 @@ async def submit(
     if len(meta) != len(files):
         raise HTTPException(status_code=400, detail="Rasmlar soni mos emas")
 
-    # Guruhda hali mavzu (topic) yo'q bo'lsa — avtomatik yaratamiz
+    # Guruhda hali mavzu (topic) yo'q bo'lsa — avtomatik yaratamiz.
+    # E'TIBOR: agar guruhda bu filial nomi bilan topic ALLAQACHON mavjud
+    # bo'lsa (masalan admin qo'lda ochgan yoki bot_listener oldinroq
+    # bog'lab qo'ygan bo'lsa), bazada thread_id allaqachon to'ldirilgan
+    # bo'ladi va bu yerga umuman kirmaymiz — mavjud topicga yuboraveramiz.
     thread_id = filial["thread_id"]
     if not thread_id:
-        thread_id = await tg.create_forum_topic(filial["name"])
-        await db.set_filial_thread_id(filial_id, thread_id)
+        # So'rov kelguncha oralab, boshqa parallel submit yoki
+        # bot_listener allaqachon thread_id'ni bog'lagan bo'lishi mumkin —
+        # shuning uchun yana bir bor bazadan yangilab tekshiramiz.
+        fresh = await db.get_filial(filial_id)
+        thread_id = fresh["thread_id"] if fresh else None
+
+    if not thread_id:
+        new_thread_id = await tg.create_forum_topic(filial["name"])
+        # Atomik "claim": faqat thread_id hali NULL bo'lsagina o'rnatiladi.
+        # Shu bilan bir vaqtda kelgan boshqa so'rov ikkinchi marta topic
+        # yaratib yubormaydi.
+        if await db.claim_filial_thread_id(filial_id, new_thread_id):
+            thread_id = new_thread_id
+        else:
+            # Boshqa parallel so'rov bizdan oldin thread_id'ni o'rnatib
+            # ulgurgan — o'sha mavjud thread_id'dan foydalanamiz.
+            fresh = await db.get_filial(filial_id)
+            thread_id = fresh["thread_id"]
 
     full_name = " ".join(filter(None, [user.get("first_name"), user.get("last_name")])) or user.get("username") or "Noma'lum"
 
@@ -300,6 +320,28 @@ async def admin_delete_filial(filial_id: int, init_data: str):
     if not ok:
         raise HTTPException(status_code=404, detail="Filial topilmadi")
     return {"ok": True}
+
+
+@app.put("/api/admin/filials/{filial_id}/thread")
+async def admin_link_filial_thread(
+    filial_id: int,
+    init_data: str = Form(...),
+    thread_id: int = Form(...),
+):
+    """Filialni guruhdagi MAVJUD topic (message_thread_id) bilan qo'lda
+    bog'laydi. Ayniqsa, bot_listener ishga tushirilishidan OLDIN guruhda
+    filial nomi bilan topic allaqachon yaratib qo'yilgan bo'lsa foydali —
+    shu endpoint orqali admin uni bir marta bog'lab qo'ysa, mini-app
+    keyingi safar shu filial uchun YANGI topic yaratmay, mavjudiga
+    yozadi. thread_id ni topic ustidagi xabarni forward qilib yoki
+    guruh havolasidagi /ID qismidan olish mumkin."""
+    await _check_superadmin(init_data)
+    filial = await db.get_filial(filial_id)
+    if not filial:
+        raise HTTPException(status_code=404, detail="Filial topilmadi")
+    await db.set_filial_thread_id(filial_id, thread_id)
+    updated = await db.get_filial(filial_id)
+    return {"ok": True, "filial": updated}
 
 
 @app.put("/api/admin/filials/{filial_id}/active")

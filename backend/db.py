@@ -112,6 +112,48 @@ async def set_filial_thread_id(filial_id: int, thread_id: int):
     )
 
 
+async def claim_filial_thread_id(filial_id: int, thread_id: int) -> bool:
+    """Filialga thread_id'ni FAQAT hali thread_id o'rnatilmagan bo'lsagina
+    biriktiradi (UPDATE ... WHERE thread_id IS NULL). Bu bir vaqtning o'zida
+    kelgan bir nechta so'rov bir xil filial uchun ikkita alohida topic
+    yaratib yubormasligini kafolatlaydi (race condition himoyasi).
+    True qaytsa — shu chaqiruv thread_id'ni muvaffaqiyatli o'rnatdi degani."""
+    pool = await get_pool()
+    result = await pool.execute(
+        "UPDATE filials SET thread_id = $1 WHERE id = $2 AND thread_id IS NULL",
+        thread_id, filial_id,
+    )
+    return result.endswith(" 1")
+
+
+async def link_thread_id_by_name(topic_name: str, thread_id: int) -> Optional[dict]:
+    """Guruhda (botning o'zi orqali yoki ADMIN TOMONIDAN QO'LDA) yangi forum-topic
+    yaratilganda chaqiriladi. Agar topic nomi mini-app'dagi biror filial nomi
+    bilan mos kelsa (katta-kichik harf va bo'sh joylarga sezgir emas) va o'sha
+    filialda hali thread_id o'rnatilmagan bo'lsa — shu topicni filialga bog'lab
+    qo'yadi. Natijada keyingi safar shu filialga hisobot yuborilganda mini-app
+    xuddi shu nom bilan YANGI topic yaratmaydi, balki mavjudiga yozadi."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        UPDATE filials SET thread_id = $2
+        WHERE lower(trim(name)) = lower(trim($1)) AND thread_id IS NULL
+        RETURNING id, name, thread_id
+        """,
+        topic_name, thread_id,
+    )
+    return dict(row) if row else None
+
+
+async def get_filial_by_name(name: str):
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT id, name, thread_id FROM filials WHERE lower(trim(name)) = lower(trim($1))",
+        name,
+    )
+    return dict(row) if row else None
+
+
 async def create_filial(name: str) -> dict:
     pool = await get_pool()
     row = await pool.fetchrow(

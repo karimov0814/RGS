@@ -47,9 +47,47 @@ async def send_contact_request(client: httpx.AsyncClient, chat_id: int):
     )
 
 
+async def handle_forum_topic_created(message: dict):
+    """Guruhda YANGI forum-topic yaratilganda Telegram shu turdagi xizmat
+    xabarini yuboradi (botning o'zi createForumTopic orqali yaratganda ham,
+    ADMIN GURUHDA QO'LDA yaratganda ham). Agar topic nomi mini-app'dagi
+    biror filial nomi bilan bir xil bo'lsa va o'sha filialda hali thread_id
+    o'rnatilmagan bo'lsa — shu topicni filialga bog'lab qo'yamiz.
+
+    Shu tufayli: agar guruhda filial nomi bilan topic ALLAQACHON mavjud
+    bo'lsa (yoki admin uni qo'lda oldindan yaratib qo'ygan bo'lsa), mini-app
+    xuddi shu nom bilan qaytadan topic yaratmaydi — chunki thread_id
+    bazada allaqachon to'ldirilgan bo'ladi va submit() shunchaki mavjud
+    topicga xabar yuboraveradi."""
+    topic_created = message.get("forum_topic_created")
+    if not topic_created:
+        return
+
+    topic_name = (topic_created.get("name") or "").strip()
+    thread_id = message.get("message_thread_id") or message.get("message_id")
+    if not topic_name or not thread_id:
+        return
+
+    try:
+        linked = await db.link_thread_id_by_name(topic_name, thread_id)
+        if linked:
+            print(
+                f"Topic avtomatik bog'landi: '{topic_name}' -> "
+                f"filial #{linked['id']} (thread_id={thread_id})"
+            )
+    except Exception as e:  # noqa: BLE001
+        print("Topic bog'lashda xatolik:", e)
+
+
 async def handle_update(client: httpx.AsyncClient, update: dict):
     message = update.get("message")
     if not message:
+        return
+
+    # Guruh ichida yangi topic ochilishi haqidagi xizmat xabari — kontakt/
+    # /start logikasidan oldin, alohida ishlov beramiz va chiqib ketamiz.
+    if message.get("forum_topic_created"):
+        await handle_forum_topic_created(message)
         return
 
     chat_id = message["chat"]["id"]
