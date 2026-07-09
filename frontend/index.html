@@ -9,40 +9,47 @@
 </head>
 <body>
 
+<!-- Til almashtirgich: doim yuqori burchakda ko'rinadi (xodim va admin panellarida) -->
+<div id="lang-switcher" class="lang-switcher">
+  <button class="lang-btn" data-lang="uz">UZ</button>
+  <button class="lang-btn" data-lang="ru">RU</button>
+  <button class="lang-btn" data-lang="en">EN</button>
+</div>
+
 <div id="app">
 
   <!-- 0-EKRAN: Ruxsat yo'q -->
   <section id="screen-blocked" class="screen">
     <div class="success-box">
       <span class="state-icon state-icon--muted" data-icon="block"></span>
-      <h1>Ushbu bot ishlamaydi</h1>
-      <p class="subtitle">Sizda ushbu ilovadan foydalanish uchun ruxsat yo'q</p>
+      <h1 data-i18n="blocked_title">Ushbu bot ishlamaydi</h1>
+      <p class="subtitle" data-i18n="blocked_subtitle">Sizda ushbu ilovadan foydalanish uchun ruxsat yo'q</p>
     </div>
   </section>
 
   <!-- ADMIN EKRAN: Superadmin panel -->
   <section id="screen-admin" class="screen">
     <div class="header">
-      <h1>Admin panel</h1>
-      <p class="subtitle">Foydalanuvchilar va filiallarni boshqarish</p>
+      <h1 data-i18n="admin_title">Admin panel</h1>
+      <p class="subtitle" data-i18n="admin_subtitle">Foydalanuvchilar va filiallarni boshqarish</p>
     </div>
 
     <div class="admin-tabs">
-      <button class="admin-tab-btn active" data-tab="admin-tab-users">Userlar</button>
-      <button class="admin-tab-btn" data-tab="admin-tab-filials">Filiallar</button>
-      <button class="admin-tab-btn" data-tab="admin-tab-sections">Bo'limlar</button>
-      <button class="admin-tab-btn" data-tab="admin-tab-report">Hisobot rejimi</button>
+      <button class="admin-tab-btn active" data-tab="admin-tab-users" data-i18n="tab_users">Userlar</button>
+      <button class="admin-tab-btn" data-tab="admin-tab-filials" data-i18n="tab_filials">Filiallar</button>
+      <button class="admin-tab-btn" data-tab="admin-tab-sections" data-i18n="tab_sections">Bo'limlar</button>
+      <button class="admin-tab-btn" data-tab="admin-tab-report" data-i18n="tab_report">Hisobot rejimi</button>
     </div>
 
     <!-- Userlar -->
     <div id="admin-tab-users" class="admin-tab-content active">
       <div class="admin-add-box">
-        <h2>Yangi foydalanuvchi qo'shish</h2>
-        <input type="text" id="new-user-id" class="admin-input" placeholder="Telegram user ID (masalan 123456789)" inputmode="numeric" />
-        <input type="text" id="new-user-name" class="admin-input" placeholder="Ism (ixtiyoriy)" />
-        <label class="admin-checkbox"><input type="checkbox" id="new-user-superadmin" /> Superadmin huquqi</label>
+        <h2 data-i18n="users_add_title">Yangi foydalanuvchi qo'shish</h2>
+        <input type="text" id="new-user-id" class="admin-input" data-i18n-placeholder="users_id_placeholder" placeholder="Telegram user ID (masalan 123456789)" inputmode="numeric" />
+        <input type="text" id="new-user-name" class="admin-input" data-i18n-placeholder="users_name_placeholder" placeholder="Ism (ixtiyoriy)" />
+        <label class="admin-checkbox"><input type="checkbox" id="new-user-superadmin" /> <span data-i18n="users_superadmin_checkbox">Superadmin huquqi</span></label>
         <button id="btn-add-user" class="primary-btn">
-          <span class="btn-icon" data-icon="plus"></span> Qo'shish
+          <span class="btn-icon" data-icon="plus"></span><span data-i18n="btn_add">Qo'shish</span>
         </button>
       </div>
       <div id="users-list" class="admin-list"></div>
@@ -51,10 +58,10 @@
     <!-- Filiallar -->
     <div id="admin-tab-filials" class="admin-tab-content">
       <div class="admin-add-box">
-        <h2>Yangi filial qo'shish</h2>
-        <input type="text" id="new-filial-name" class="admin-input" placeholder="Filial nomi" />
+        <h2 data-i18n="filials_add_title">Yangi filial qo'shish</h2>
+        <input type="text" id="new-filial-name" class="admin-input" data-i18n-placeholder="filials_name_placeholder" placeholder="Filial nomi" />
         <button id="btn-add-filial" class="primary-btn">
-          <span class="btn-icon" data-icon="plus"></span> Qo'shish
+          <span class="btn-icon" data-icon="plus"></span><span data-i18n="btn_add">Qo'shish</span>
         </button>
       </div>
       <div id="filials-list" class="admin-list"></div>
@@ -62,13 +69,13 @@
 
     <!-- Bo'limlar (har bir chek-list turi uchun alohida) -->
     <div id="admin-tab-sections" class="admin-tab-content">
-      <p class="subtitle">Har bir chek-list turi uchun qaysi bo'lim (mavzu) so'ralishini shu yerdan sozlang.</p>
+      <p class="subtitle" data-i18n="sections_subtitle">Har bir chek-list turi uchun qaysi bo'lim (mavzu) so'ralishini shu yerdan sozlang.</p>
       <div id="section-checklist-subtabs" class="admin-tabs admin-subtabs"></div>
       <div class="admin-add-box">
-        <h2>Yangi bo'lim qo'shish</h2>
-        <input type="text" id="new-section-name" class="admin-input" placeholder="Bo'lim nomi (masalan: Fasad fotosi)" />
+        <h2 data-i18n="sections_add_title">Yangi bo'lim qo'shish</h2>
+        <input type="text" id="new-section-name" class="admin-input" data-i18n-placeholder="sections_name_placeholder" placeholder="Bo'lim nomi (masalan: Fasad fotosi)" />
         <button id="btn-add-section" class="primary-btn">
-          <span class="btn-icon" data-icon="plus"></span> Qo'shish
+          <span class="btn-icon" data-icon="plus"></span><span data-i18n="btn_add">Qo'shish</span>
         </button>
       </div>
       <div id="sections-list" class="admin-list"></div>
@@ -76,9 +83,9 @@
 
     <!-- Hisobot rejimi -->
     <div id="admin-tab-report" class="admin-tab-content">
-      <p class="subtitle">Superadmin sifatida ham oddiy hisobot yubora olasiz.</p>
+      <p class="subtitle" data-i18n="report_subtitle">Superadmin sifatida ham oddiy hisobot yubora olasiz.</p>
       <button id="btn-goto-report" class="primary-btn">
-        <span class="btn-icon" data-icon="camera"></span> Hisobot yuborish
+        <span class="btn-icon" data-icon="camera"></span><span data-i18n="report_send_btn">Hisobot yuborish</span>
       </button>
     </div>
   </section>
@@ -86,12 +93,12 @@
   <!-- 1-EKRAN: Filial tanlash -->
   <section id="screen-filial" class="screen">
     <div class="header">
-      <h1>Filialni tanlang</h1>
-      <p class="subtitle">Hisobot qaysi filial uchun</p>
+      <h1 data-i18n="filial_screen_title">Filialni tanlang</h1>
+      <p class="subtitle" data-i18n="filial_screen_subtitle">Hisobot qaysi filial uchun</p>
     </div>
     <div id="admin-back-bar" class="hidden">
       <button id="btn-back-to-admin" class="secondary-btn">
-        <span class="btn-icon" data-icon="settings"></span> Admin panelga qaytish
+        <span class="btn-icon" data-icon="settings"></span><span data-i18n="admin_back_btn">Admin panelga qaytish</span>
       </button>
     </div>
     <div id="filial-list" class="filial-list"></div>
@@ -101,10 +108,10 @@
   <section id="screen-checklist" class="screen">
     <div class="header">
       <h1 id="checklist-filial-title">Filial</h1>
-      <p class="subtitle">Chek-list turini tanlang</p>
+      <p class="subtitle" data-i18n="checklist_subtitle">Chek-list turini tanlang</p>
     </div>
     <button id="btn-back-to-filial" class="secondary-btn back-btn">
-      <span class="btn-icon" data-icon="chevron" style="transform:rotate(180deg)"></span> Filialni o'zgartirish
+      <span class="btn-icon" data-icon="chevron" style="transform:rotate(180deg)"></span><span data-i18n="checklist_back_btn">Filialni o'zgartirish</span>
     </button>
     <div id="checklist-type-list" class="filial-list"></div>
   </section>
@@ -116,7 +123,7 @@
       <p id="checklist-name-subtitle" class="subtitle"></p>
       <div class="progress-wrap">
         <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
-        <span id="progress-text" class="hint">0 / 0 bo'lim</span>
+        <span id="progress-text" class="hint">0 / 0</span>
       </div>
     </div>
     <div id="section-list" class="section-list"></div>
@@ -126,9 +133,9 @@
   <section id="screen-success" class="screen">
     <div class="success-box">
       <span class="state-icon state-icon--accent" data-icon="check"></span>
-      <h1>Yuborildi!</h1>
-      <p class="subtitle">Barcha rasmlar tegishli filial bo'limiga yetkazildi. Rahmat!</p>
-      <button id="btn-close" class="primary-btn">Yopish</button>
+      <h1 data-i18n="success_title">Yuborildi!</h1>
+      <p class="subtitle" data-i18n="success_subtitle">Barcha rasmlar tegishli filial bo'limiga yetkazildi. Rahmat!</p>
+      <button id="btn-close" class="primary-btn" data-i18n="close_btn">Yopish</button>
     </div>
   </section>
 
@@ -139,7 +146,7 @@
 
 <div id="overlay-loading" class="overlay hidden">
   <div class="spinner"></div>
-  <p id="loading-text">Yuborilmoqda...</p>
+  <p id="loading-text">Yuklanmoqda...</p>
 </div>
 
 <!-- Universal modal: Telegram WebView ichida window.alert/confirm/prompt
@@ -157,6 +164,7 @@
   </div>
 </div>
 
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

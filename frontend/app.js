@@ -58,7 +58,7 @@ function showScreen(id) {
 }
 
 function showLoading(text) {
-  document.getElementById("loading-text").textContent = text || "Yuklanmoqda...";
+  document.getElementById("loading-text").textContent = text || t("loading_default");
   document.getElementById("overlay-loading").classList.remove("hidden");
 }
 function hideLoading() {
@@ -89,7 +89,9 @@ function closeModal() {
  * confirm bosilganda field qiymatlari bilan resolve bo'ladi (yoki
  * bekor qilinsa null).
  */
-function openModal({ title, message = "", fields = [], confirmText = "OK", cancelText = "Bekor qilish", danger = false, showCancel = true }) {
+function openModal({ title, message = "", fields = [], confirmText, cancelText, danger = false, showCancel = true }) {
+  if (confirmText === undefined) confirmText = t("modal_ok");
+  if (cancelText === undefined) cancelText = t("modal_cancel");
   return new Promise((resolve) => {
     modalTitleEl.textContent = title;
     modalMessageEl.textContent = message;
@@ -142,21 +144,27 @@ function openModal({ title, message = "", fields = [], confirmText = "OK", cance
   });
 }
 
-function showAlert(message, title = "Diqqat") {
-  return openModal({ title, message, confirmText: "Tushunarli", showCancel: false });
+function showAlert(message, title) {
+  return openModal({ title: title || t("modal_attention"), message, confirmText: t("modal_understood"), showCancel: false });
 }
-function showConfirm(message, { title = "Tasdiqlang", confirmText = "Ha", danger = false } = {}) {
-  return openModal({ title, message, confirmText, danger, showCancel: true }).then((r) => r === true);
+function showConfirm(message, { title, confirmText, danger = false } = {}) {
+  return openModal({
+    title: title || t("modal_confirm_title"),
+    message,
+    confirmText: confirmText || t("modal_yes"),
+    danger,
+    showCancel: true,
+  }).then((r) => r === true);
 }
-function showPrompt({ title, fields, confirmText = "Saqlash" }) {
-  return openModal({ title, fields, confirmText, showCancel: true });
+function showPrompt({ title, fields, confirmText }) {
+  return openModal({ title, fields, confirmText: confirmText || t("btn_save"), showCancel: true });
 }
 
 // ---------- 0. Ruxsat tekshiruvi + 1. Filial tanlash (ilova ochilishi bilan) ----------
 state.isSuperadmin = false;
 
 async function loadFilials() {
-  showLoading("Yuklanmoqda...");
+  showLoading(t("loading_default"));
   try {
     const res = await fetch(`${API_BASE}/api/config?init_data=${encodeURIComponent(initData)}`);
 
@@ -196,7 +204,7 @@ async function loadFilials() {
     }
   } catch (e) {
     hideLoading();
-    await showAlert("Ma'lumotlarni yuklab bo'lmadi. Qayta urinib ko'ring.");
+    await showAlert(t("error_load_config"));
   }
 }
 
@@ -218,7 +226,7 @@ function renderChecklistTypes() {
   list.innerHTML = "";
 
   if (!state.checklistTypes.length) {
-    list.innerHTML = `<p class="hint">Hozircha chek-list turi sozlanmagan</p>`;
+    list.innerHTML = `<p class="hint">${t("checklist_none")}</p>`;
     return;
   }
 
@@ -236,7 +244,7 @@ document.getElementById("btn-back-to-filial").addEventListener("click", () => {
 });
 
 async function selectChecklistType(checklistType) {
-  showLoading("Yuklanmoqda...");
+  showLoading(t("loading_default"));
   try {
     const res = await fetch(
       `${API_BASE}/api/sections?init_data=${encodeURIComponent(initData)}&checklist_type_id=${checklistType.id}`
@@ -257,7 +265,7 @@ async function selectChecklistType(checklistType) {
     showScreen("screen-sections");
   } catch (e) {
     hideLoading();
-    await showAlert("Bo'limlarni yuklab bo'lmadi. Qayta urinib ko'ring.");
+    await showAlert(t("error_load_sections"));
   }
 }
 
@@ -308,15 +316,15 @@ function renderSectionCard(sectionId) {
         <span class="section-status-icon">${isDone ? iconMarkup("check") : ""}</span>
         <span>${sec.name}</span>
       </div>
-      <span class="photo-count">${photos.length > 0 ? photos.length + " ta rasm" : ""}</span>
+      <span class="photo-count">${photos.length > 0 ? t("photo_count", { n: photos.length }) : ""}</span>
     </div>
     <div class="photos-row">
       ${thumbsHtml}
       <button class="add-photo-btn" data-section-id="${sectionId}">
-        ${iconMarkup("plus")}<span>Rasm qo'shish</span>
+        ${iconMarkup("plus")}<span>${t("add_photo_btn")}</span>
       </button>
     </div>
-    ${isDone ? `<textarea class="comment-input" rows="2" placeholder="Izoh (ixtiyoriy)">${photos[0].comment || ""}</textarea>` : ""}
+    ${isDone ? `<textarea class="comment-input" rows="2" placeholder="${t("comment_placeholder")}">${photos[0].comment || ""}</textarea>` : ""}
   `;
 
   card.querySelector(".add-photo-btn").addEventListener("click", () => {
@@ -368,7 +376,7 @@ function updateProgress() {
   const done = state.sections.filter((s) => state.photos[s.id]?.length > 0).length;
   const pct = total ? Math.round((done / total) * 100) : 0;
   document.getElementById("progress-fill").style.width = `${pct}%`;
-  document.getElementById("progress-text").textContent = `${done} / ${total} bo'lim`;
+  document.getElementById("progress-text").textContent = t("sections_progress", { done, total });
 }
 
 function attachMainButton() {
@@ -376,7 +384,7 @@ function attachMainButton() {
   const done = state.sections.filter((s) => state.photos[s.id]?.length > 0).length;
   const allDone = total > 0 && done === total;
 
-  tg.MainButton.setText("✅ Yuborish");
+  tg.MainButton.setText(t("mainbutton_submit"));
   if (allDone) {
     tg.MainButton.show();
     tg.MainButton.enable();
@@ -391,7 +399,7 @@ tg.MainButton.onClick(async () => {
 
 // ---------- 3. Yuborish ----------
 async function submitReport() {
-  showLoading("Yuborilmoqda...");
+  showLoading(t("loading_sending"));
   tg.MainButton.showProgress();
 
   try {
@@ -422,7 +430,7 @@ async function submitReport() {
     hideLoading();
     tg.MainButton.hideProgress();
     tg.HapticFeedback.notificationOccurred("error");
-    await showAlert("Yuborishda xatolik yuz berdi. Qayta urinib ko'ring.");
+    await showAlert(t("error_submit"));
   }
 }
 
@@ -460,7 +468,7 @@ function adminForm(extraFields) {
 async function adminFetch(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, options);
   if (!res.ok) {
-    let detail = "Xatolik yuz berdi";
+    let detail = t("error_generic");
     try {
       const err = await res.json();
       detail = err.detail || detail;
@@ -473,12 +481,12 @@ async function adminFetch(path, options = {}) {
 // ---------- Userlar ----------
 async function loadAdminUsers() {
   const list = document.getElementById("users-list");
-  list.innerHTML = `<p class="hint">Yuklanmoqda...</p>`;
+  list.innerHTML = `<p class="hint">${t("loading_default")}</p>`;
   try {
     const data = await adminFetch(`/api/admin/users?init_data=${encodeURIComponent(initData)}`);
     list.innerHTML = "";
     if (!data.users.length) {
-      list.innerHTML = `<p class="hint">Hozircha foydalanuvchi yo'q</p>`;
+      list.innerHTML = `<p class="hint">${t("users_none")}</p>`;
       return;
     }
     data.users.forEach((u) => {
@@ -486,12 +494,12 @@ async function loadAdminUsers() {
       el.className = "admin-list-item";
       el.innerHTML = `
         <div class="admin-list-main">
-          <div class="admin-list-title">${u.full_name || "Ism kiritilmagan"} ${u.is_superadmin ? `<span class="badge">${iconMarkup("crown")}</span>` : ""}</div>
-          <div class="admin-list-sub">ID: ${u.telegram_user_id}</div>
+          <div class="admin-list-title">${u.full_name || t("users_no_name")} ${u.is_superadmin ? `<span class="badge">${iconMarkup("crown")}</span>` : ""}</div>
+          <div class="admin-list-sub">${t("users_id_label", { id: u.telegram_user_id })}</div>
         </div>
         <div class="admin-list-actions">
-          <button class="icon-btn" data-action="edit" aria-label="Tahrirlash">${iconMarkup("edit")}</button>
-          <button class="icon-btn danger" data-action="delete" aria-label="O'chirish">${iconMarkup("trash")}</button>
+          <button class="icon-btn" data-action="edit" aria-label="${t("edit_label")}">${iconMarkup("edit")}</button>
+          <button class="icon-btn danger" data-action="delete" aria-label="${t("delete_label")}">${iconMarkup("trash")}</button>
         </div>
       `;
       el.querySelector('[data-action="edit"]').addEventListener("click", () => editUser(u));
@@ -499,7 +507,7 @@ async function loadAdminUsers() {
       list.appendChild(el);
     });
   } catch (e) {
-    list.innerHTML = `<p class="hint">Yuklashda xatolik: ${e.message}</p>`;
+    list.innerHTML = `<p class="hint">${t("load_error_prefix")}${e.message}</p>`;
   }
 }
 
@@ -510,11 +518,11 @@ document.getElementById("btn-add-user").addEventListener("click", async () => {
 
   const telegramUserId = idInput.value.trim();
   if (!telegramUserId || !/^\d+$/.test(telegramUserId)) {
-    await showAlert("Telegram user ID faqat raqamlardan iborat bo'lishi kerak");
+    await showAlert(t("users_id_numeric_error"));
     return;
   }
 
-  showLoading("Qo'shilmoqda...");
+  showLoading(t("loading_adding"));
   try {
     await adminFetch("/api/admin/users", {
       method: "POST",
@@ -529,7 +537,7 @@ document.getElementById("btn-add-user").addEventListener("click", async () => {
     saCheckbox.checked = false;
     await loadAdminUsers();
   } catch (e) {
-    await showAlert("Xatolik: " + e.message);
+    await showAlert(t("error_prefix") + e.message);
   } finally {
     hideLoading();
   }
@@ -537,16 +545,16 @@ document.getElementById("btn-add-user").addEventListener("click", async () => {
 
 async function editUser(u) {
   const result = await showPrompt({
-    title: "Foydalanuvchini tahrirlash",
-    confirmText: "Saqlash",
+    title: t("users_edit_title"),
+    confirmText: t("btn_save"),
     fields: [
-      { id: "full_name", label: "Ism", value: u.full_name || "" },
-      { id: "is_superadmin", label: "Superadmin huquqi", type: "checkbox", checked: !!u.is_superadmin },
+      { id: "full_name", label: t("users_name_label"), value: u.full_name || "" },
+      { id: "is_superadmin", label: t("users_superadmin_checkbox"), type: "checkbox", checked: !!u.is_superadmin },
     ],
   });
   if (!result) return;
 
-  showLoading("Saqlanmoqda...");
+  showLoading(t("loading_saving"));
   try {
     await adminFetch(`/api/admin/users/${u.id}`, {
       method: "PUT",
@@ -554,28 +562,28 @@ async function editUser(u) {
     });
     await loadAdminUsers();
   } catch (e) {
-    await showAlert("Xatolik: " + e.message);
+    await showAlert(t("error_prefix") + e.message);
   } finally {
     hideLoading();
   }
 }
 
 async function deleteUser(u) {
-  const ok = await showConfirm(`${u.full_name || u.telegram_user_id} o'chirilsinmi?`, {
-    title: "Foydalanuvchini o'chirish",
-    confirmText: "O'chirish",
+  const ok = await showConfirm(t("users_delete_confirm", { name: u.full_name || u.telegram_user_id }), {
+    title: t("users_delete_title"),
+    confirmText: t("btn_delete"),
     danger: true,
   });
   if (!ok) return;
 
-  showLoading("O'chirilmoqda...");
+  showLoading(t("loading_deleting"));
   try {
     await adminFetch(`/api/admin/users/${u.id}?init_data=${encodeURIComponent(initData)}`, {
       method: "DELETE",
     });
     await loadAdminUsers();
   } catch (e) {
-    await showAlert("Xatolik: " + e.message);
+    await showAlert(t("error_prefix") + e.message);
   } finally {
     hideLoading();
   }
@@ -584,12 +592,12 @@ async function deleteUser(u) {
 // ---------- Filiallar ----------
 async function loadAdminFilials() {
   const list = document.getElementById("filials-list");
-  list.innerHTML = `<p class="hint">Yuklanmoqda...</p>`;
+  list.innerHTML = `<p class="hint">${t("loading_default")}</p>`;
   try {
     const data = await adminFetch(`/api/admin/filials?init_data=${encodeURIComponent(initData)}`);
     list.innerHTML = "";
     if (!data.filials.length) {
-      list.innerHTML = `<p class="hint">Hozircha filial yo'q</p>`;
+      list.innerHTML = `<p class="hint">${t("filials_none")}</p>`;
       return;
     }
     data.filials.forEach((f) => {
@@ -597,14 +605,14 @@ async function loadAdminFilials() {
       el.className = "admin-list-item" + (f.is_active ? "" : " is-inactive");
       el.innerHTML = `
         <div class="admin-list-main">
-          <div class="admin-list-title">${f.name} ${f.is_active ? "" : `<span class="badge-text">nofaol</span>`}</div>
-          <div class="admin-list-sub">ID: ${f.id} · Topic: ${f.thread_id ? `#${f.thread_id}` : "bog'lanmagan"}</div>
+          <div class="admin-list-title">${f.name} ${f.is_active ? "" : `<span class="badge-text">${t("inactive_badge")}</span>`}</div>
+          <div class="admin-list-sub">${t("filials_meta", { id: f.id, topic: f.thread_id ? `#${f.thread_id}` : t("filials_topic_unlinked") })}</div>
         </div>
         <div class="admin-list-actions">
-          <button class="icon-btn active-toggle ${f.is_active ? "" : "is-off"}" data-action="toggle" aria-label="${f.is_active ? "Nofaol qilish" : "Faollashtirish"}">${iconMarkup(f.is_active ? "eye" : "eyeOff")}</button>
-          <button class="icon-btn" data-action="link" aria-label="Mavjud topicga bog'lash" title="Guruhdagi mavjud topic bilan bog'lash">${iconMarkup("link")}</button>
-          <button class="icon-btn" data-action="edit" aria-label="Tahrirlash">${iconMarkup("edit")}</button>
-          <button class="icon-btn danger" data-action="delete" aria-label="O'chirish">${iconMarkup("trash")}</button>
+          <button class="icon-btn active-toggle ${f.is_active ? "" : "is-off"}" data-action="toggle" aria-label="${f.is_active ? t("toggle_deactivate_label") : t("toggle_activate_label")}">${iconMarkup(f.is_active ? "eye" : "eyeOff")}</button>
+          <button class="icon-btn" data-action="link" aria-label="${t("link_topic_title")}" title="${t("link_topic_tooltip")}">${iconMarkup("link")}</button>
+          <button class="icon-btn" data-action="edit" aria-label="${t("edit_label")}">${iconMarkup("edit")}</button>
+          <button class="icon-btn danger" data-action="delete" aria-label="${t("delete_label")}">${iconMarkup("trash")}</button>
         </div>
       `;
       el.querySelector('[data-action="toggle"]').addEventListener("click", () => toggleFilialActive(f));
@@ -614,7 +622,7 @@ async function loadAdminFilials() {
       list.appendChild(el);
     });
   } catch (e) {
-    list.innerHTML = `<p class="hint">Yuklashda xatolik: ${e.message}</p>`;
+    list.innerHTML = `<p class="hint">${t("load_error_prefix")}${e.message}</p>`;
   }
 }
 
@@ -622,11 +630,11 @@ document.getElementById("btn-add-filial").addEventListener("click", async () => 
   const nameInput = document.getElementById("new-filial-name");
   const name = nameInput.value.trim();
   if (!name) {
-    await showAlert("Filial nomini kiriting");
+    await showAlert(t("filials_name_required"));
     return;
   }
 
-  showLoading("Qo'shilmoqda...");
+  showLoading(t("loading_adding"));
   try {
     await adminFetch("/api/admin/filials", {
       method: "POST",
@@ -635,7 +643,7 @@ document.getElementById("btn-add-filial").addEventListener("click", async () => 
     nameInput.value = "";
     await loadAdminFilials();
   } catch (e) {
-    await showAlert("Xatolik: " + e.message);
+    await showAlert(t("error_prefix") + e.message);
   } finally {
     hideLoading();
   }
@@ -643,12 +651,12 @@ document.getElementById("btn-add-filial").addEventListener("click", async () => 
 
 async function linkFilialThread(f) {
   const result = await showPrompt({
-    title: "Mavjud topicga bog'lash",
-    confirmText: "Bog'lash",
+    title: t("link_topic_title"),
+    confirmText: t("btn_link"),
     fields: [
       {
         id: "thread_id",
-        label: "Topic (thread) ID raqami",
+        label: t("link_field_label"),
         value: f.thread_id || "",
       },
     ],
@@ -657,11 +665,11 @@ async function linkFilialThread(f) {
 
   const threadId = parseInt(result.thread_id, 10);
   if (!Number.isInteger(threadId) || threadId <= 0) {
-    await showAlert("Topic ID musbat butun son bo'lishi kerak");
+    await showAlert(t("link_id_error"));
     return;
   }
 
-  showLoading("Bog'lanmoqda...");
+  showLoading(t("loading_linking"));
   try {
     await adminFetch(`/api/admin/filials/${f.id}/thread`, {
       method: "PUT",
@@ -669,7 +677,7 @@ async function linkFilialThread(f) {
     });
     await loadAdminFilials();
   } catch (e) {
-    await showAlert("Xatolik: " + e.message);
+    await showAlert(t("error_prefix") + e.message);
   } finally {
     hideLoading();
   }
@@ -677,13 +685,13 @@ async function linkFilialThread(f) {
 
 async function editFilial(f) {
   const result = await showPrompt({
-    title: "Filialni tahrirlash",
-    confirmText: "Saqlash",
-    fields: [{ id: "name", label: "Filial nomi", value: f.name }],
+    title: t("filials_edit_title"),
+    confirmText: t("btn_save"),
+    fields: [{ id: "name", label: t("filials_name_label"), value: f.name }],
   });
   if (!result || !result.name) return;
 
-  showLoading("Saqlanmoqda...");
+  showLoading(t("loading_saving"));
   try {
     await adminFetch(`/api/admin/filials/${f.id}`, {
       method: "PUT",
@@ -691,7 +699,7 @@ async function editFilial(f) {
     });
     await loadAdminFilials();
   } catch (e) {
-    await showAlert("Xatolik: " + e.message);
+    await showAlert(t("error_prefix") + e.message);
   } finally {
     hideLoading();
   }
@@ -704,13 +712,16 @@ async function toggleFilialActive(f) {
   const makingInactive = f.is_active;
   const ok = await showConfirm(
     makingInactive
-      ? `"${f.name}" filiali endi ro'yxatlarda ko'rinmaydi. Bazada saqlanib qoladi va istalgan vaqt qaytarish mumkin.`
-      : `"${f.name}" filiali qaytadan faol qilinsinmi va ro'yxatlarda ko'rinadigan bo'lsinmi?`,
-    { title: makingInactive ? "Filialni nofaol qilish" : "Filialni faollashtirish", confirmText: makingInactive ? "Nofaol qilish" : "Faollashtirish" }
+      ? t("filials_toggle_off_confirm", { name: f.name })
+      : t("filials_toggle_on_confirm", { name: f.name }),
+    {
+      title: makingInactive ? t("filials_toggle_off_title") : t("filials_toggle_on_title"),
+      confirmText: makingInactive ? t("toggle_deactivate_label") : t("toggle_activate_label"),
+    }
   );
   if (!ok) return;
 
-  showLoading("Saqlanmoqda...");
+  showLoading(t("loading_saving"));
   try {
     await adminFetch(`/api/admin/filials/${f.id}/active`, {
       method: "PUT",
@@ -718,7 +729,7 @@ async function toggleFilialActive(f) {
     });
     await loadAdminFilials();
   } catch (e) {
-    await showAlert("Xatolik: " + e.message);
+    await showAlert(t("error_prefix") + e.message);
   } finally {
     hideLoading();
   }
@@ -726,19 +737,19 @@ async function toggleFilialActive(f) {
 
 async function deleteFilial(f) {
   const ok = await showConfirm(
-    `"${f.name}" filiali bazadan butunlay o'chiriladi. Bu amalni orqaga qaytarib bo'lmaydi. Filialni vaqtincha yashirish uchun o'rniga ko'z ikonkasidan foydalaning.`,
-    { title: "Filialni butunlay o'chirish", confirmText: "Butunlay o'chirish", danger: true }
+    t("filials_delete_confirm", { name: f.name }),
+    { title: t("filials_delete_title"), confirmText: t("btn_delete_permanent"), danger: true }
   );
   if (!ok) return;
 
-  showLoading("O'chirilmoqda...");
+  showLoading(t("loading_deleting"));
   try {
     await adminFetch(`/api/admin/filials/${f.id}?init_data=${encodeURIComponent(initData)}`, {
       method: "DELETE",
     });
     await loadAdminFilials();
   } catch (e) {
-    await showAlert("Xatolik: " + e.message);
+    await showAlert(t("error_prefix") + e.message);
   } finally {
     hideLoading();
   }
@@ -749,24 +760,24 @@ let adminSelectedChecklistTypeId = null;
 
 async function initAdminSections() {
   const subtabsEl = document.getElementById("section-checklist-subtabs");
-  subtabsEl.innerHTML = `<p class="hint">Yuklanmoqda...</p>`;
+  subtabsEl.innerHTML = `<p class="hint">${t("loading_default")}</p>`;
   try {
     const data = await adminFetch(`/api/admin/checklist-types?init_data=${encodeURIComponent(initData)}`);
     const types = data.checklist_types;
     subtabsEl.innerHTML = "";
     if (!types.length) {
-      subtabsEl.innerHTML = `<p class="hint">Chek-list turlari topilmadi</p>`;
+      subtabsEl.innerHTML = `<p class="hint">${t("sections_types_none")}</p>`;
       return;
     }
-    if (adminSelectedChecklistTypeId === null || !types.some((t) => t.id === adminSelectedChecklistTypeId)) {
+    if (adminSelectedChecklistTypeId === null || !types.some((ct) => ct.id === adminSelectedChecklistTypeId)) {
       adminSelectedChecklistTypeId = types[0].id;
     }
-    types.forEach((t) => {
+    types.forEach((ct) => {
       const btn = document.createElement("button");
-      btn.className = "admin-tab-btn" + (t.id === adminSelectedChecklistTypeId ? " active" : "");
-      btn.textContent = `${CHECKLIST_TYPE_EMOJI[t.key] || "📋"} ${t.name}`;
+      btn.className = "admin-tab-btn" + (ct.id === adminSelectedChecklistTypeId ? " active" : "");
+      btn.textContent = `${CHECKLIST_TYPE_EMOJI[ct.key] || "📋"} ${ct.name}`;
       btn.addEventListener("click", () => {
-        adminSelectedChecklistTypeId = t.id;
+        adminSelectedChecklistTypeId = ct.id;
         subtabsEl.querySelectorAll(".admin-tab-btn").forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
         loadAdminSections();
@@ -775,21 +786,21 @@ async function initAdminSections() {
     });
     await loadAdminSections();
   } catch (e) {
-    subtabsEl.innerHTML = `<p class="hint">Yuklashda xatolik: ${e.message}</p>`;
+    subtabsEl.innerHTML = `<p class="hint">${t("load_error_prefix")}${e.message}</p>`;
   }
 }
 
 async function loadAdminSections() {
   const list = document.getElementById("sections-list");
   if (adminSelectedChecklistTypeId === null) return;
-  list.innerHTML = `<p class="hint">Yuklanmoqda...</p>`;
+  list.innerHTML = `<p class="hint">${t("loading_default")}</p>`;
   try {
     const data = await adminFetch(
       `/api/admin/sections?init_data=${encodeURIComponent(initData)}&checklist_type_id=${adminSelectedChecklistTypeId}`
     );
     list.innerHTML = "";
     if (!data.sections.length) {
-      list.innerHTML = `<p class="hint">Hozircha bo'lim yo'q</p>`;
+      list.innerHTML = `<p class="hint">${t("sections_none")}</p>`;
       return;
     }
     data.sections.forEach((s) => {
@@ -797,12 +808,12 @@ async function loadAdminSections() {
       el.className = "admin-list-item" + (s.is_active ? "" : " is-inactive");
       el.innerHTML = `
         <div class="admin-list-main">
-          <div class="admin-list-title">${s.name} ${s.is_active ? "" : `<span class="badge-text">nofaol</span>`}</div>
+          <div class="admin-list-title">${s.name} ${s.is_active ? "" : `<span class="badge-text">${t("inactive_badge")}</span>`}</div>
         </div>
         <div class="admin-list-actions">
-          <button class="icon-btn active-toggle ${s.is_active ? "" : "is-off"}" data-action="toggle" aria-label="${s.is_active ? "Nofaol qilish" : "Faollashtirish"}">${iconMarkup(s.is_active ? "eye" : "eyeOff")}</button>
-          <button class="icon-btn" data-action="edit" aria-label="Tahrirlash">${iconMarkup("edit")}</button>
-          <button class="icon-btn danger" data-action="delete" aria-label="O'chirish">${iconMarkup("trash")}</button>
+          <button class="icon-btn active-toggle ${s.is_active ? "" : "is-off"}" data-action="toggle" aria-label="${s.is_active ? t("toggle_deactivate_label") : t("toggle_activate_label")}">${iconMarkup(s.is_active ? "eye" : "eyeOff")}</button>
+          <button class="icon-btn" data-action="edit" aria-label="${t("edit_label")}">${iconMarkup("edit")}</button>
+          <button class="icon-btn danger" data-action="delete" aria-label="${t("delete_label")}">${iconMarkup("trash")}</button>
         </div>
       `;
       el.querySelector('[data-action="toggle"]').addEventListener("click", () => toggleSectionActive(s));
@@ -811,7 +822,7 @@ async function loadAdminSections() {
       list.appendChild(el);
     });
   } catch (e) {
-    list.innerHTML = `<p class="hint">Yuklashda xatolik: ${e.message}</p>`;
+    list.innerHTML = `<p class="hint">${t("load_error_prefix")}${e.message}</p>`;
   }
 }
 
@@ -819,15 +830,15 @@ document.getElementById("btn-add-section").addEventListener("click", async () =>
   const nameInput = document.getElementById("new-section-name");
   const name = nameInput.value.trim();
   if (!name) {
-    await showAlert("Bo'lim nomini kiriting");
+    await showAlert(t("sections_name_required"));
     return;
   }
   if (adminSelectedChecklistTypeId === null) {
-    await showAlert("Avval chek-list turini tanlang");
+    await showAlert(t("sections_select_checklist_first"));
     return;
   }
 
-  showLoading("Qo'shilmoqda...");
+  showLoading(t("loading_adding"));
   try {
     await adminFetch("/api/admin/sections", {
       method: "POST",
@@ -836,7 +847,7 @@ document.getElementById("btn-add-section").addEventListener("click", async () =>
     nameInput.value = "";
     await loadAdminSections();
   } catch (e) {
-    await showAlert("Xatolik: " + e.message);
+    await showAlert(t("error_prefix") + e.message);
   } finally {
     hideLoading();
   }
@@ -844,13 +855,13 @@ document.getElementById("btn-add-section").addEventListener("click", async () =>
 
 async function editSection(s) {
   const result = await showPrompt({
-    title: "Bo'limni tahrirlash",
-    confirmText: "Saqlash",
-    fields: [{ id: "name", label: "Bo'lim nomi", value: s.name }],
+    title: t("sections_edit_title"),
+    confirmText: t("btn_save"),
+    fields: [{ id: "name", label: t("sections_name_label"), value: s.name }],
   });
   if (!result || !result.name) return;
 
-  showLoading("Saqlanmoqda...");
+  showLoading(t("loading_saving"));
   try {
     await adminFetch(`/api/admin/sections/${s.id}`, {
       method: "PUT",
@@ -858,7 +869,7 @@ async function editSection(s) {
     });
     await loadAdminSections();
   } catch (e) {
-    await showAlert("Xatolik: " + e.message);
+    await showAlert(t("error_prefix") + e.message);
   } finally {
     hideLoading();
   }
@@ -868,13 +879,16 @@ async function toggleSectionActive(s) {
   const makingInactive = s.is_active;
   const ok = await showConfirm(
     makingInactive
-      ? `"${s.name}" bo'limi endi bu chek-listda so'ralmaydi. Istalgan vaqt qaytarish mumkin.`
-      : `"${s.name}" bo'limi qaytadan faol qilinsinmi?`,
-    { title: makingInactive ? "Bo'limni nofaol qilish" : "Bo'limni faollashtirish", confirmText: makingInactive ? "Nofaol qilish" : "Faollashtirish" }
+      ? t("sections_toggle_off_confirm", { name: s.name })
+      : t("sections_toggle_on_confirm", { name: s.name }),
+    {
+      title: makingInactive ? t("sections_toggle_off_title") : t("sections_toggle_on_title"),
+      confirmText: makingInactive ? t("toggle_deactivate_label") : t("toggle_activate_label"),
+    }
   );
   if (!ok) return;
 
-  showLoading("Saqlanmoqda...");
+  showLoading(t("loading_saving"));
   try {
     await adminFetch(`/api/admin/sections/${s.id}/active`, {
       method: "PUT",
@@ -882,7 +896,7 @@ async function toggleSectionActive(s) {
     });
     await loadAdminSections();
   } catch (e) {
-    await showAlert("Xatolik: " + e.message);
+    await showAlert(t("error_prefix") + e.message);
   } finally {
     hideLoading();
   }
@@ -890,21 +904,45 @@ async function toggleSectionActive(s) {
 
 async function deleteSection(s) {
   const ok = await showConfirm(
-    `"${s.name}" bo'limi bazadan butunlay o'chiriladi (unga bog'liq eski rasm hisobotlari bilan birga). Buning o'rniga ko'z ikonkasidan foydalanish tavsiya etiladi.`,
-    { title: "Bo'limni butunlay o'chirish", confirmText: "Butunlay o'chirish", danger: true }
+    t("sections_delete_confirm", { name: s.name }),
+    { title: t("sections_delete_title"), confirmText: t("btn_delete_permanent"), danger: true }
   );
   if (!ok) return;
 
-  showLoading("O'chirilmoqda...");
+  showLoading(t("loading_deleting"));
   try {
     await adminFetch(`/api/admin/sections/${s.id}?init_data=${encodeURIComponent(initData)}`, {
       method: "DELETE",
     });
     await loadAdminSections();
   } catch (e) {
-    await showAlert("Xatolik: " + e.message);
+    await showAlert(t("error_prefix") + e.message);
   } finally {
     hideLoading();
+  }
+}
+
+// ============================================================
+//  Til o'zgarganda joriy ekrandagi dinamik matnlarni yangilash
+//  (statik matnlar i18n.js tomonidan avtomatik yangilanadi)
+// ============================================================
+function onLangChange() {
+  const activeScreen = document.querySelector(".screen.active");
+  const activeId = activeScreen ? activeScreen.id : null;
+
+  if (activeId === "screen-checklist") {
+    renderChecklistTypes();
+  } else if (activeId === "screen-sections") {
+    renderSections();
+  } else if (activeId === "screen-admin") {
+    loadAdminUsers();
+    loadAdminFilials();
+    initAdminSections();
+  }
+
+  // MainButton matnini yangilash (agar hozir ko'rsatilayotgan bo'lsa)
+  if (state.sections && state.sections.length) {
+    attachMainButton();
   }
 }
 

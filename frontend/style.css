@@ -52,7 +52,7 @@ html, body {
 .screen {
   display: none;
   flex-direction: column;
-  padding: 24px 18px 100px;
+  padding: calc(env(safe-area-inset-top, 0) + 52px) 18px 100px;
   min-height: 100vh;
   animation: fadeIn .16s ease;
 }
@@ -531,3 +531,35 @@ html, body {
 
 /* ---------- Ruxsat yo'q ekrani ---------- */
 #screen-blocked { justify-content: center; }
+
+/* ---------- Til almashtirgich (yuqori burchakda, barcha ekranlarda) ---------- */
+.lang-switcher {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0) + 10px);
+  right: 12px;
+  z-index: 1200;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 3px var(--shadow);
+}
+.lang-btn {
+  border: none;
+  background: transparent;
+  color: var(--hint);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 5px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  line-height: 1;
+}
+.lang-btn.active {
+  background: var(--text);
+  color: var(--bg, #fff);
+}
+.lang-btn:active { opacity: 0.8; }
