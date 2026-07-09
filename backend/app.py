@@ -29,7 +29,7 @@ import telegram_utils as tg
 import bot_listener
 import translate_utils
 
-app = FastAPI(title="Filial Feedback Mini App")
+app = FastAPI(title="Street77 & Wok System App")
 
 # Bootstrap uchun: ilk marta hech qanday superadmin bo'lmaganda shu yerdan
 # ruxsat berish mumkin (.env dagi SUPERADMIN_IDS="123456789,987654321").
@@ -39,7 +39,7 @@ SUPERADMIN_IDS = [
     int(x) for x in os.environ.get("SUPERADMIN_IDS", "").replace(" ", "").split(",") if x
 ]
 
-NOT_ALLOWED_MESSAGE = "ushbu bot ishlamaydi"
+NOT_ALLOWED_MESSAGE = "Ushbu bot ishlamaydi"
 
 # Frontenddagi i18n.js bilan bir xil ro'yxat — foydalanuvchi tanlagan til
 # har doim shu 3 tadan biriga tushishini kafolatlaydi (aks holda "uz"ga
@@ -390,7 +390,7 @@ async def admin_add_filial(
     await _check_superadmin(init_data)
     name = name.strip()
     if not name:
-        raise HTTPException(status_code=400, detail="Filial nomi bo'sh bo'lishi mumkin emas")
+        raise HTTPException(status_code=400, detail="Filial nomi bo'sh bo'lishi mumkin emas!")
     filial = await db.create_filial(name)
     return {"ok": True, "filial": filial}
 
@@ -405,7 +405,7 @@ async def admin_update_filial(
     await _check_superadmin(init_data)
     name = name.strip()
     if not name:
-        raise HTTPException(status_code=400, detail="Filial nomi bo'sh bo'lishi mumkin emas")
+        raise HTTPException(status_code=400, detail="Filial nomi bo'sh bo'lishi mumkin emas!")
     filial = await db.update_filial(filial_id, name, is_active)
     if not filial:
         raise HTTPException(status_code=404, detail="Filial topilmadi")
