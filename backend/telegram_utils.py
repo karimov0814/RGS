@@ -91,3 +91,61 @@ async def send_photo_to_topic(thread_id: int, photo_bytes: bytes, filename: str,
         msg = result["result"]
         largest_photo = msg["photo"][-1]
         return {"file_id": largest_photo["file_id"], "message_id": msg["message_id"]}
+
+
+# Telegram sendMediaGroup bitta so'rovda ko'pi bilan 10 ta media qabul qiladi.
+MEDIA_GROUP_CHUNK_SIZE = 10
+
+
+async def send_media_group_to_topic(thread_id: int, photos: list[tuple[bytes, str]],
+                                     caption: str) -> list[dict]:
+    """Bir nechta rasmni BITTA albom (media group) sifatida filial mavzusiga
+    yuboradi — Telegramda barchasi bitta xabar/albom bo'lib ko'rinadi.
+    Caption faqat albomning birinchi rasmiga qo'yiladi (Telegram shuni albom
+    izohi sifatida ko'rsatadi). photos yuborilgan tartibda {file_id,
+    message_id} ro'yxatini qaytaradi.
+
+    Agar 10 tadan ko'p rasm bo'lsa, Telegram cheklovi tufayli 10 talik
+    bo'laklarga (chunk) bo'linib ketma-ket albomlar sifatida yuboriladi;
+    caption faqat birinchi bo'lakning birinchi rasmiga qo'yiladi.
+    """
+    out: list[dict] = []
+    async with httpx.AsyncClient(timeout=60) as client:
+        for chunk_start in range(0, len(photos), MEDIA_GROUP_CHUNK_SIZE):
+            chunk = photos[chunk_start:chunk_start + MEDIA_GROUP_CHUNK_SIZE]
+
+            if len(chunk) == 1:
+                # sendMediaGroup kamida 2 ta media talab qiladi — yagona
+                # rasm qolsa oddiy sendPhoto bilan yuboramiz.
+                photo_bytes, filename = chunk[0]
+                item_caption = caption if chunk_start == 0 else ""
+                sent = await send_photo_to_topic(thread_id, photo_bytes, filename, item_caption)
+                out.append(sent)
+                continue
+
+            media = []
+            files = {}
+            for idx, (photo_bytes, filename) in enumerate(chunk):
+                attach_name = f"photo{chunk_start + idx}"
+                files[attach_name] = (filename, photo_bytes, "image/jpeg")
+                item = {"type": "photo", "media": f"attach://{attach_name}"}
+                if idx == 0 and chunk_start == 0:
+                    item["caption"] = caption
+                    item["parse_mode"] = "HTML"
+                media.append(item)
+
+            data = {
+                "chat_id": GROUP_CHAT_ID,
+                "message_thread_id": thread_id,
+                "media": json.dumps(media),
+            }
+            resp = await client.post(f"{TG_API}/sendMediaGroup", data=data, files=files)
+            resp.raise_for_status()
+            result = resp.json()
+            if not result.get("ok"):
+                raise RuntimeError(f"sendMediaGroup xato: {result}")
+            for msg in result["result"]:
+                largest_photo = msg["photo"][-1]
+                out.append({"file_id": largest_photo["file_id"], "message_id": msg["message_id"]})
+
+    return out

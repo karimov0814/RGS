@@ -231,13 +231,27 @@ async def submit(
     now_str = datetime.now().strftime("%d.%m.%Y %H:%M")
     checklist_emoji = CHECKLIST_TYPE_EMOJI.get(checklist_type["key"], "📋")
 
-    # field nomi -> UploadFile
-    files_by_field = {f.filename or f"file_{i}": f for i, f in enumerate(files)}
-    # aslida field nomi emas, index bo'yicha moslashtiramiz (formda tartib saqlanadi)
+    # Rasmlarni bo'lim (section_id) bo'yicha guruhlaymiz — shu tufayli bitta
+    # bo'limga tegishli barcha rasmlar Telegramga BITTA albom (media group)
+    # sifatida yuboriladi, har biri alohida xabar bo'lib ketmaydi.
+    # dict Python 3.7+ da qo'shilish tartibini saqlaydi, shuning uchun
+    # bo'limlar frontendda ko'rsatilgan tartibda yuboriladi.
+    section_groups: dict[int, dict] = {}
     for item, upload in zip(meta, files):
         section_id = item["section_id"]
-        section_name = item.get("section_name", "")
-        comment = (item.get("comment") or "").strip()
+        group = section_groups.setdefault(section_id, {
+            "section_name": item.get("section_name", ""),
+            "items": [],
+        })
+        group["items"].append((item, upload))
+
+    for section_id, group in section_groups.items():
+        section_name = group["section_name"]
+        items = group["items"]
+
+        # Bo'lim uchun izoh — barcha rasmlar bitta umumiy izohni ishlatadi
+        # (frontend shunday yuboradi), shuning uchun birinchisidan olamiz.
+        comment = (items[0][0].get("comment") or "").strip()
 
         caption = (
             f"🏢 <b>{filial['name']}</b>\n"
@@ -249,21 +263,33 @@ async def submit(
         if comment:
             caption += f"\n💬 {comment}"
 
-        photo_bytes = await upload.read()
-        sent = await tg.send_photo_to_topic(
-            thread_id=thread_id,
-            photo_bytes=photo_bytes,
-            filename=upload.filename or "photo.jpg",
-            caption=caption,
-        )
+        photo_payload = []
+        for item, upload in items:
+            photo_payload.append((await upload.read(), upload.filename or "photo.jpg"))
 
-        await db.add_submission_photo(
-            submission_id=submission_id,
-            section_id=section_id,
-            file_id=sent["file_id"],
-            comment=comment or None,
-            sent_message_id=sent["message_id"],
-        )
+        if len(photo_payload) == 1:
+            sent_list = [await tg.send_photo_to_topic(
+                thread_id=thread_id,
+                photo_bytes=photo_payload[0][0],
+                filename=photo_payload[0][1],
+                caption=caption,
+            )]
+        else:
+            sent_list = await tg.send_media_group_to_topic(
+                thread_id=thread_id,
+                photos=photo_payload,
+                caption=caption,
+            )
+
+        for (item, _upload), sent in zip(items, sent_list):
+            item_comment = (item.get("comment") or "").strip()
+            await db.add_submission_photo(
+                submission_id=submission_id,
+                section_id=section_id,
+                file_id=sent["file_id"],
+                comment=item_comment or None,
+                sent_message_id=sent["message_id"],
+            )
 
     return {"ok": True, "submission_id": submission_id}
 
