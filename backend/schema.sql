@@ -433,3 +433,23 @@ CREATE TABLE IF NOT EXISTS filial_section_hidden (
     section_id INTEGER NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
     PRIMARY KEY (filial_id, section_id)
 );
+
+-- ============================================================
+--  BO'LIMLAR TARTIBINI TO'G'IRLASH (drag-and-drop uchun tayyorgarlik)
+--  Ilgari yangi bo'lim qo'shilganda sort_order har doim 0 bilan
+--  yaratilgan (`create_section` funksiyasida), shuning uchun ko'plab
+--  bo'limlar bir xil tartib raqamiga ega bo'lib qolgan va ro'yxat
+--  "tartibsiz" ko'rinardi. Bu yerda har bir chek-list turi ichida
+--  mavjud bo'limlarga hozirgi tartibiga mos ketma-ket (0,1,2,...)
+--  sort_order beriladi — bu superadmin keyinchalik drag-and-drop bilan
+--  o'zgartira oladigan izchil boshlang'ich tartib bo'ladi. Idempotent —
+--  qayta ishga tushirilganda (masalan admin allaqachon qo'lda
+--  tartiblab bo'lgan bo'lsa) hech narsani buzmaydi.
+-- ============================================================
+WITH ranked AS (
+    SELECT id, ROW_NUMBER() OVER (PARTITION BY checklist_type_id ORDER BY sort_order, id) - 1 AS rn
+    FROM sections
+)
+UPDATE sections s SET sort_order = ranked.rn
+FROM ranked
+WHERE s.id = ranked.id AND s.sort_order <> ranked.rn;
