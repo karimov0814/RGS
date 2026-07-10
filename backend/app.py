@@ -480,6 +480,33 @@ async def admin_list_sections(init_data: str, checklist_type_id: int):
     return {"sections": await db.list_all_sections(checklist_type_id)}
 
 
+# E'TIBOR: bu endpoint /api/admin/sections/{section_id} dan OLDIN
+# e'lon qilingan bo'lishi SHART — aks holda FastAPI "reorder" so'zini
+# {section_id}:int sifatida parslashga urinib, 422 xato bilan
+# to'xtaydi va bu yerga hech qachon yetib kelmaydi (path-matching
+# yuqoridan pastga qarab, birinchi mos kelgan marshrutda to'xtaydi).
+@app.put("/api/admin/sections/reorder")
+async def admin_reorder_sections(
+    init_data: str = Form(...),
+    checklist_type_id: int = Form(...),
+    ordered_section_ids: str = Form(...),  # JSON: [3, 1, 2, ...] — yangi tartib
+):
+    """Superadmin bo'limlar ro'yxatini drag-and-drop bilan surishtirganda
+    chaqiriladi — yangi tartib bazaga yoziladi va shundan keyin BARCHA
+    foydalanuvchilar (`/api/sections`) xuddi shu tartibni ko'radi."""
+    await _check_superadmin(init_data)
+    try:
+        ids = json.loads(ordered_section_ids)
+        if not isinstance(ids, list):
+            raise ValueError
+        ids = [int(x) for x in ids]
+    except (json.JSONDecodeError, ValueError):
+        raise HTTPException(status_code=400, detail="ordered_section_ids noto'g'ri formatda")
+
+    await db.reorder_sections(checklist_type_id, ids)
+    return {"ok": True}
+
+
 @app.post("/api/admin/sections")
 async def admin_add_section(
     init_data: str = Form(...),
