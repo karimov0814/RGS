@@ -905,12 +905,12 @@ async function loadAdminSections() {
     }
     data.sections.forEach((s) => {
       const el = document.createElement("div");
-      el.className = "admin-list-item" + (s.is_active ? "" : " is-inactive");
+      el.className = "admin-list-item section-list-item" + (s.is_active ? "" : " is-inactive");
       el.dataset.sectionId = s.id;
       el.innerHTML = `
         <span class="drag-handle" aria-label="${t("sections_drag_label")}">${iconMarkup("drag")}</span>
         <div class="admin-list-main">
-          <div class="admin-list-title">${pickLocalized(s)} ${s.is_active ? "" : `<span class="badge-text">${t("inactive_badge")}</span>`}</div>
+          <div class="admin-list-title section-list-title">${pickLocalized(s)} ${s.is_active ? "" : `<span class="badge-text">${t("inactive_badge")}</span>`}</div>
         </div>
         <div class="admin-list-actions">
           <button class="icon-btn" data-action="visibility" aria-label="${t("sections_visibility_label")}">${iconMarkup("building")}</button>
