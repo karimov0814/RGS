@@ -458,6 +458,24 @@ html, body {
   align-items: center;
   gap: 6px;
 }
+/* Bo'limlar nomi ko'pincha uzun (batafsil tavsif) bo'lgani uchun
+   qisqartirilmasdan (ellipsis) TO'LIQ ko'rinishi kerak — shuning uchun
+   qatorga tushishi (wrap) ga ruxsat beriladi va shrift barcha bo'lim
+   matnlari uchun bir xil va biroz kichikroq qilinadi. */
+.admin-list-item.section-list-item { align-items: flex-start; }
+.admin-list-item.section-list-item .drag-handle,
+.admin-list-item.section-list-item .admin-list-actions {
+  margin-top: 1px;
+}
+.admin-list-title.section-list-title {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  font-size: 12.5px;
+  line-height: 1.4;
+  font-weight: 500;
+  align-items: flex-start;
+}
 .badge {
   display: inline-flex;
   align-items: center;
