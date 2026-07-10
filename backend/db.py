@@ -332,10 +332,16 @@ async def create_section(checklist_type_id: int, name_uz: str, name_ru: str, nam
     # to'ldirilgan tildagi nom bilan to'ldiramiz, lekin logikada endi
     # ishlatilmaydi (uning o'rniga name_uz/ru/en ishlatiladi).
     legacy_name = name_uz or name_ru or name_en
+    # Yangi bo'lim RO'YXAT OXIRIGA qo'shiladi (mavjud eng katta
+    # sort_order'dan +1), doim 0 bilan boshlanmaydi — aks holda yangi
+    # bo'lim eskilarning tepasiga tushib, tartibni buzib qo'yardi.
     row = await pool.fetchrow(
         """
-        INSERT INTO sections (name, name_uz, name_ru, name_en, checklist_type_id)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO sections (name, name_uz, name_ru, name_en, checklist_type_id, sort_order)
+        VALUES (
+            $1, $2, $3, $4, $5,
+            COALESCE((SELECT MAX(sort_order) + 1 FROM sections WHERE checklist_type_id = $5), 0)
+        )
         RETURNING id, name_uz, name_ru, name_en, sort_order, is_active
         """,
         legacy_name, name_uz or None, name_ru or None, name_en or None, checklist_type_id,
@@ -422,6 +428,25 @@ async def is_section_hidden_for_filial(section_id: int, filial_id: int) -> bool:
         section_id, filial_id,
     )
     return row is not None
+
+
+async def reorder_sections(checklist_type_id: int, ordered_section_ids: list[int]) -> None:
+    """Superadmin admin panelda drag-and-drop bilan belgilagan YANGI
+    tartibni saqlaydi. `ordered_section_ids` ro'yxatidagi ketma-ketlik
+    bo'yicha sort_order 0,1,2,... qilib qayta yoziladi — shu bilan
+    barcha oddiy foydalanuvchilar tomonida ham bo'limlar aynan shu
+    tartibda ko'rinadi (chunki list_active_sections ORDER BY sort_order
+    ishlatadi). `checklist_type_id` bilan cheklash — boshqa chek-list
+    turiga tegishli section_id tasodifan (yoki xato/zararli so'rov bilan)
+    aralashib ketmasligi uchun xavfsizlik chorasi."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            for index, section_id in enumerate(ordered_section_ids):
+                await conn.execute(
+                    "UPDATE sections SET sort_order = $2 WHERE id = $1 AND checklist_type_id = $3",
+                    section_id, index, checklist_type_id,
+                )
 
 
 # ---------- Submissionlar ----------
