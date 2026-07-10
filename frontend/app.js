@@ -565,9 +565,10 @@ async function loadAdminUsers() {
       list.innerHTML = `<p class="hint">${t("users_none")}</p>`;
       return;
     }
-    data.users.forEach((u) => {
+
+    function renderUserRow(u) {
       const el = document.createElement("div");
-      el.className = "admin-list-item";
+      el.className = "admin-list-item" + (u.is_superadmin ? " is-superadmin" : "");
       el.innerHTML = `
         <div class="admin-list-main">
           <div class="admin-list-title">${u.full_name || t("users_no_name")} ${u.is_superadmin ? `<span class="badge">${iconMarkup("crown")}</span>` : ""}</div>
@@ -580,8 +581,30 @@ async function loadAdminUsers() {
       `;
       el.querySelector('[data-action="edit"]').addEventListener("click", () => editUser(u));
       el.querySelector('[data-action="delete"]').addEventListener("click", () => deleteUser(u));
-      list.appendChild(el);
-    });
+      return el;
+    }
+
+    // Superadminlar oddiy adminlardan DIZAYNDA aniq ajralib turishi
+    // uchun ikkita alohida guruhga bo'lib ko'rsatiladi (backend/ma'lumot
+    // tuzilishi o'zgarmaydi — faqat ko'rinish).
+    const superadmins = data.users.filter((u) => u.is_superadmin);
+    const regularAdmins = data.users.filter((u) => !u.is_superadmin);
+
+    if (superadmins.length) {
+      const title = document.createElement("div");
+      title.className = "admin-list-group-title is-superadmin";
+      title.textContent = `${t("users_group_superadmins")} · ${superadmins.length}`;
+      list.appendChild(title);
+      superadmins.forEach((u) => list.appendChild(renderUserRow(u)));
+    }
+
+    if (regularAdmins.length) {
+      const title = document.createElement("div");
+      title.className = "admin-list-group-title";
+      title.textContent = `${t("users_group_admins")} · ${regularAdmins.length}`;
+      list.appendChild(title);
+      regularAdmins.forEach((u) => list.appendChild(renderUserRow(u)));
+    }
   } catch (e) {
     list.innerHTML = `<p class="hint">${t("load_error_prefix")}${e.message}</p>`;
   }
