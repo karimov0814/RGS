@@ -28,6 +28,7 @@ const ICONS = {
   block: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8.5"/><path d="M6.2 6.2l11.6 11.6" stroke-linecap="round"/></svg>`,
   crown: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8l3.2 3.2L12 6l4.8 5.2L20 8l-1.4 9.5H5.4Z"/><path d="M5.4 20h13.2"/></svg>`,
   building: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="10" height="18" rx="1"/><path d="M15 9h4v12H5"/><path d="M8 7h1M11 7h1M8 11h1M11 11h1M8 15h1M11 15h1"/></svg>`,
+  drag: `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/></svg>`,
   link: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15l6-6"/><path d="M10.5 7.5l1-1a3.5 3.5 0 0 1 5 5l-1 1"/><path d="M13.5 16.5l-1 1a3.5 3.5 0 0 1-5-5l1-1"/></svg>`,
 };
 
@@ -876,12 +877,15 @@ async function loadAdminSections() {
     list.innerHTML = "";
     if (!data.sections.length) {
       list.innerHTML = `<p class="hint">${t("sections_none")}</p>`;
+      destroySectionsSortable();
       return;
     }
     data.sections.forEach((s) => {
       const el = document.createElement("div");
       el.className = "admin-list-item" + (s.is_active ? "" : " is-inactive");
+      el.dataset.sectionId = s.id;
       el.innerHTML = `
+        <span class="drag-handle" aria-label="${t("sections_drag_label")}">${iconMarkup("drag")}</span>
         <div class="admin-list-main">
           <div class="admin-list-title">${pickLocalized(s)} ${s.is_active ? "" : `<span class="badge-text">${t("inactive_badge")}</span>`}</div>
         </div>
@@ -898,9 +902,52 @@ async function loadAdminSections() {
       el.querySelector('[data-action="delete"]').addEventListener("click", () => deleteSection(s));
       list.appendChild(el);
     });
+    initSectionsSortable(list);
   } catch (e) {
     list.innerHTML = `<p class="hint">${t("load_error_prefix")}${e.message}</p>`;
+    destroySectionsSortable();
   }
+}
+
+// ---------- Bo'limlar tartibini drag-and-drop bilan o'zgartirish ----------
+// Superadmin bu yerda bo'limlarni ushlab surishi bilan yangi tartib
+// darhol backendga yuboriladi — shundan keyin BARCHA xodimlar
+// (`/api/sections`) ham aynan shu tartibda ko'radi.
+let sectionsSortableInstance = null;
+
+function destroySectionsSortable() {
+  if (sectionsSortableInstance) {
+    sectionsSortableInstance.destroy();
+    sectionsSortableInstance = null;
+  }
+}
+
+function initSectionsSortable(list) {
+  destroySectionsSortable();
+  if (typeof Sortable === "undefined") return; // CDN yuklanmagan bo'lsa — jim tarzda o'tkazib yuboriladi
+  sectionsSortableInstance = Sortable.create(list, {
+    handle: ".drag-handle",
+    animation: 150,
+    ghostClass: "sortable-ghost",
+    chosenClass: "sortable-chosen",
+    onEnd: async () => {
+      const orderedIds = Array.from(list.children)
+        .map((el) => parseInt(el.dataset.sectionId, 10))
+        .filter((id) => !Number.isNaN(id));
+      try {
+        await adminFetch("/api/admin/sections/reorder", {
+          method: "PUT",
+          body: adminForm({
+            checklist_type_id: adminSelectedChecklistTypeId,
+            ordered_section_ids: JSON.stringify(orderedIds),
+          }),
+        });
+      } catch (e) {
+        await showAlert(t("error_prefix") + e.message);
+        await loadAdminSections(); // xatolik bo'lsa — serverdagi haqiqiy tartibga qaytaramiz
+      }
+    },
+  });
 }
 
 // Bo'limni qaysi filial(lar)da YASHIRISH kerakligini boshqarish modali —
