@@ -9,7 +9,13 @@ Muhit o'zgaruvchilari (.env):
 """
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+# Server (Railway) UTC bo'yicha ishlaydi, lekin filiallar O'zbekiston
+# vaqti (UTC+5, Asia/Tashkent) bo'yicha ishlaydi. Shu sababli xabarlardagi
+# vaqt shu offset bilan hisoblanadi, aks holda Telegram guruhida vaqt
+# 5 soat orqada ko'rsatilardi.
+TASHKENT_TZ = timezone(timedelta(hours=5))
 
 try:
     from dotenv import load_dotenv
@@ -261,7 +267,7 @@ async def submit(
         checklist_type_name=checklist_type["name"],
     )
 
-    now_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+    now_str = datetime.now(TASHKENT_TZ).strftime("%d.%m.%Y %H:%M")
     checklist_emoji = CHECKLIST_TYPE_EMOJI.get(checklist_type["key"], "📋")
 
     # Rasmlarni bo'lim (section_id) bo'yicha guruhlaymiz — shu tufayli bitta
