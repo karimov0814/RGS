@@ -344,55 +344,6 @@ async function selectChecklistType(checklistType) {
 // ---------- 2. Bo'limlar bo'yicha (bir nechta) rasm olish ----------
 let activeSectionId = null;
 const cameraInput = document.getElementById("camera-input");
-const galleryInput = document.getElementById("gallery-input");
-
-// ============================================================
-//  Rasm manbasi tanlash — DOM ICHIDA chiziladigan action sheet.
-//
-//  MUHIM: tg.showPopup() ISHLATILMAYDI. Sababi — u Telegram
-//  tomonidan NATIVE (WebView'dan tashqarida) chiziladi, shuning
-//  uchun uning tugmasi bosilishi WebView'ning DOM'i uchun haqiqiy
-//  "user activation" hodisasi hisoblanmaydi. Natijada keyinroq
-//  chaqirilgan input.click() ayniqsa iOS Safari/WKWebView'da
-//  darhol avtomatik yopib yuboriladi ("avtomatik chiqib ketish").
-//  Shu sabab bu yerda oddiy HTML <button> va SINXRON click
-//  handlerlar ishlatiladi — bu ikkala platformada ham user
-//  activation'ni saqlab qoladi.
-// ============================================================
-const photoSourceOverlay = document.getElementById("photo-source-overlay");
-const photoSourceTitleEl = document.getElementById("photo-source-title");
-const photoSourceMessageEl = document.getElementById("photo-source-message");
-const photoSourceCameraBtn = document.getElementById("photo-source-camera-btn");
-const photoSourceGalleryBtn = document.getElementById("photo-source-gallery-btn");
-const photoSourceCancelBtn = document.getElementById("photo-source-cancel-btn");
-
-function openPhotoSourceSheet() {
-  photoSourceTitleEl.textContent = t("add_photo_popup_title");
-  photoSourceMessageEl.textContent = t("add_photo_popup_message");
-  photoSourceCameraBtn.textContent = t("add_photo_camera_btn");
-  photoSourceGalleryBtn.textContent = t("add_photo_gallery_btn");
-  photoSourceCancelBtn.textContent = t("modal_cancel");
-  photoSourceOverlay.classList.remove("hidden");
-}
-function closePhotoSourceSheet() {
-  photoSourceOverlay.classList.add("hidden");
-}
-
-// Har bir tugma o'zining SINXRON, haqiqiy DOM click handleriga ega —
-// bunday holatda input.click()/getUserMedia so'rovi bir xil user
-// gesture zanjiri ichida qoladi, va WebKit/Chromium uni bloklamaydi.
-photoSourceCameraBtn.addEventListener("click", () => {
-  closePhotoSourceSheet();
-  openCameraCapture();
-});
-photoSourceGalleryBtn.addEventListener("click", () => {
-  closePhotoSourceSheet();
-  galleryInput.click();
-});
-photoSourceCancelBtn.addEventListener("click", closePhotoSourceSheet);
-photoSourceOverlay.addEventListener("click", (e) => {
-  if (e.target === photoSourceOverlay) closePhotoSourceSheet();
-});
 
 // ============================================================
 //  Custom kamera UI (getUserMedia).
@@ -590,7 +541,7 @@ function renderSectionCard(sectionId) {
 
   card.querySelector(".add-photo-btn").addEventListener("click", () => {
     activeSectionId = sectionId;
-    openPhotoSourceSheet();
+    openCameraCapture();
   });
 
   card.querySelectorAll(".remove-photo-btn").forEach((btn) => {
@@ -613,13 +564,10 @@ function renderSectionCard(sectionId) {
 }
 
 cameraInput.addEventListener("change", (e) => {
+  // Bu faqat getUserMedia mavjud bo'lmagan/ruxsat berilmagan holatlar
+  // uchun ZAXIRA yo'l — asosiy oqim custom kamera UI orqali ishlaydi.
   handlePickedFiles(e.target.files);
   cameraInput.value = ""; // qayta xuddi shu faylni tanlash imkonini saqlaydi
-});
-
-galleryInput.addEventListener("change", (e) => {
-  handlePickedFiles(e.target.files);
-  galleryInput.value = ""; // qayta xuddi shu faylni tanlash imkonini saqlaydi
 });
 
 function updateProgress() {

@@ -141,50 +141,20 @@
   </section>
 
   <!--
-    Yashirin: bo'lim uchun rasm inputlari (JS orqali dinamik ochiladi).
+    Yashirin: bo'lim uchun rasm inputi (JS orqali dinamik ochiladi).
 
-    MUHIM (Android/iOS farqi haqida izoh — real qurilmalarda tekshirilgan):
-    1) "capture" atributi Telegram Android WebView'ida onShowFileChooser()
-       darajasida E'TIBORGA OLINMAYDI — shuning uchun cameraInput'ga
-       capture qo'yilgan bo'lsa ham, Android'da baribir umumiy
-       Galereya/Fayllar chooser'i ochiladi. Bu native ilova cheklovi,
-       veb kod bilan tuzatib bo'lmaydi.
-    2) tg.showPopup() Telegram tomonidan NATIVE (WebView tashqarisida)
-       chizilgan UI, shuning uchun uning tugmasi bosilishi WebView DOM'i
-       ichida haqiqiy "user activation" hodisasi HISOBLANMAYDI — shu
-       sababli keyin chaqirilgan input.click() iOS'da darhol avtomatik
-       yopiladi (yoki umuman ishlamaydi).
-
-    YECHIM:
-    - Tanlov (Kamera/Galereya) endi WebView DOM'i ICHIDA chiziladigan
-      custom action-sheet orqali beriladi (#photo-source-overlay) —
-      tugma bosilishi haqiqiy DOM click hodisasi, shu SINXRON handler
-      ichida input.click() chaqiriladi (qarang: app.js).
-    - Android'da kamera ishonchli ochilishi uchun "Kamera" tanlanganda
-      native input EMAS, balki getUserMedia() asosidagi custom kamera
-      UI ishlatiladi (#camera-overlay) — bu OS/ilova chooser'iga
-      umuman bog'liq emas. getUserMedia mavjud bo'lmasa yoki ruxsat
-      berilmasa, native cameraInput'ga fallback qilinadi.
-    - "Galereya" tanlanganda oddiy fayl inputi (capture'siz) ishlatiladi.
+    MUHIM: faqat KAMERA orqali rasm olish qo'llab-quvvatlanadi (galereya/
+    fayl tanlash ataylab o'chirilgan — mahsulot talabi). Real qurilmalarda
+    tekshirilganda ma'lum bo'ldiki, Telegram Android WebView'ining ichki
+    fayl-chooser implementatsiyasi (onShowFileChooser) HTML
+    capture="environment" atributini butunlay e'tiborga olmaydi — shu
+    sababli kamera getUserMedia() asosidagi custom UI orqali ochiladi
+    (#camera-overlay), bu OS/Telegram chooser'iga umuman bog'liq emas.
+    cameraInput pastda faqat getUserMedia mavjud bo'lmagan yoki ruxsat
+    berilmagan holatlar uchun ZAXIRA sifatida qoladi.
   -->
   <input type="file" id="camera-input" accept="image/*" capture="environment" style="display:none" />
-  <input type="file" id="gallery-input" accept="image/*" multiple style="display:none" />
 
-</div>
-
-<!-- Rasm manbasini tanlash (Kamera / Galereya) — WebView DOM'i ICHIDA
-     chiziladi, shuning uchun tugma bosilishi haqiqiy user-activation
-     hodisasi bo'lib qoladi (tg.showPopup'dan farqli, u NATIVE UI). -->
-<div id="photo-source-overlay" class="modal-overlay hidden">
-  <div class="modal-box photo-source-box">
-    <h3 id="photo-source-title" class="modal-title"></h3>
-    <p id="photo-source-message" class="modal-message"></p>
-    <div class="photo-source-actions">
-      <button type="button" id="photo-source-camera-btn" class="photo-source-btn"></button>
-      <button type="button" id="photo-source-gallery-btn" class="photo-source-btn"></button>
-      <button type="button" id="photo-source-cancel-btn" class="photo-source-btn cancel"></button>
-    </div>
-  </div>
 </div>
 
 <!-- Custom kamera UI (getUserMedia). Android'da native fayl-chooser
