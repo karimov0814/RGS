@@ -345,6 +345,86 @@ async function selectChecklistType(checklistType) {
 let activeSectionId = null;
 const cameraInput = document.getElementById("camera-input");
 
+// ---- Ichki kamera oynasi (getUserMedia) ----
+// Telegram Android WebView'da <input capture> ishlamagani uchun
+// kamerani to'g'ridan-to'g'ri video oqim orqali ochamiz.
+const cameraModal = document.getElementById("camera-modal");
+const cameraVideo = document.getElementById("camera-video");
+const cameraCanvas = document.getElementById("camera-canvas");
+const cameraShotBtn = document.getElementById("camera-shot-btn");
+const cameraCloseBtn = document.getElementById("camera-close-btn");
+const cameraDoneBtn = document.getElementById("camera-done-btn");
+const cameraShotCount = document.getElementById("camera-shot-count");
+let cameraStream = null;
+let sessionShotCount = 0;
+
+async function openCamera(sectionId) {
+  activeSectionId = sectionId;
+  sessionShotCount = 0;
+  cameraShotCount.textContent = "";
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    // Brauzer getUserMedia'ni qo'llamaydi — eski usulga (native capture) qaytamiz
+    cameraInput.click();
+    return;
+  }
+
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } },
+      audio: false,
+    });
+    cameraVideo.srcObject = cameraStream;
+    cameraModal.classList.remove("hidden");
+  } catch (err) {
+    // Ruxsat berilmagan yoki kamera topilmadi — native inputga fallback
+    cameraInput.click();
+  }
+}
+
+function closeCamera() {
+  cameraModal.classList.add("hidden");
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((tr) => tr.stop());
+    cameraStream = null;
+  }
+}
+
+function capturePhoto() {
+  if (activeSectionId === null || !cameraVideo.videoWidth) return;
+
+  cameraCanvas.width = cameraVideo.videoWidth;
+  cameraCanvas.height = cameraVideo.videoHeight;
+  const ctx = cameraCanvas.getContext("2d");
+  ctx.drawImage(cameraVideo, 0, 0, cameraCanvas.width, cameraCanvas.height);
+
+  cameraCanvas.toBlob(
+    (blob) => {
+      if (!blob || activeSectionId === null) return;
+      const file = new File([blob], `photo_${Date.now()}.jpg`, { type: "image/jpeg" });
+      const existingComment = state.photos[activeSectionId][0]?.comment || "";
+      state.photos[activeSectionId].push({
+        file,
+        previewUrl: URL.createObjectURL(blob),
+        comment: existingComment,
+      });
+
+      sessionShotCount += 1;
+      cameraShotCount.textContent = String(sessionShotCount);
+
+      renderSectionCard(activeSectionId);
+      updateProgress();
+      attachMainButton();
+    },
+    "image/jpeg",
+    0.9
+  );
+}
+
+cameraShotBtn.addEventListener("click", capturePhoto);
+cameraCloseBtn.addEventListener("click", closeCamera);
+cameraDoneBtn.addEventListener("click", closeCamera);
+
 function renderSections() {
   const list = document.getElementById("section-list");
   list.innerHTML = "";
@@ -400,8 +480,7 @@ function renderSectionCard(sectionId) {
   `;
 
   card.querySelector(".add-photo-btn").addEventListener("click", () => {
-    activeSectionId = sectionId;
-    cameraInput.click();
+    openCamera(sectionId);
   });
 
   card.querySelectorAll(".remove-photo-btn").forEach((btn) => {
