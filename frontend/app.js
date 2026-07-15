@@ -346,18 +346,28 @@ let activeSectionId = null;
 const cameraInput = document.getElementById("camera-input");
 
 // ============================================================
-//  Custom kamera UI (getUserMedia).
+//  Platforma bo'yicha kamera strategiyasi.
 //
-//  NEGA KERAK: real qurilmalarda tekshirilganda ma'lum bo'ldiki,
-//  Telegram Android WebView'ining ichki fayl-chooser implementatsiyasi
-//  (onShowFileChooser) HTML capture="environment" atributini butunlay
-//  e'tiborga olmaydi — cameraInput.click() chaqirilsa ham baribir
-//  umumiy Galereya/Fayllar ekrani ochiladi. Bu — native ilova darajasidagi
-//  cheklov, uni veb kod bilan majburlab bo'lmaydi. Shu sabab kamera
-//  uchun butunlay boshqa yo'l tanlandi: getUserMedia() orqali browser
-//  darajasida to'g'ridan-to'g'ri kamera oqimini olib, o'z UI'imiz bilan
-//  suratga olamiz — bu OS/Telegram chooser'iga umuman bog'liq emas.
+//  iOS: native <input capture="environment"> WKWebView'da to'g'ridan-
+//  to'g'ri to'liq ekranli kamera ilovasini ochadi va TO'LIQ SENSOR
+//  o'lchamidagi, HDR/hisoblash-fotografiya bilan ishlangan rasm
+//  qaytaradi — bu getUserMedia() orqali olinadigan video-freymdan
+//  SIFAT jihatidan doim ustun bo'ladi (video oqimi hech qachon to'liq
+//  fotosurat pipeline'iga teng bo'lmaydi). iOS'da bu ishonchli
+//  ishlagani uchun ('Ishladi' — tasdiqlangan) native yo'l saqlanadi.
+//
+//  Android: Telegram Android WebView'ining onShowFileChooser()
+//  implementatsiyasi "capture" atributini e'tiborsiz qoldiradi
+//  (tasdiqlangan root cause), shuning uchun bu yerda getUserMedia()
+//  asosidagi custom UI ishlatiladi — lekin endi IMKON QADAR YUQORI
+//  sifat bilan: ImageCapture.takePhoto() (mavjud bo'lsa — bu videodan
+//  emas, kameraning to'liq fotosurat quvuridan foydalanadi) yoki
+//  yuqori-o'lchamli video-freym fallback orqali.
 // ============================================================
+function isIOSPlatform() {
+  return tg.platform === "ios";
+}
+
 const cameraOverlay = document.getElementById("camera-overlay");
 const cameraVideoEl = document.getElementById("camera-video");
 const cameraCanvasEl = document.getElementById("camera-canvas");
@@ -369,17 +379,50 @@ cameraCloseBtn.innerHTML = iconMarkup("close");
 cameraSwitchBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2.1 21 6l-4 3.9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 21.9 3 18l4-3.9"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>`;
 
 let cameraStream = null;
+let cameraImageCapture = null; // ImageCapture — mavjud bo'lsa yuqori sifat uchun
 let cameraFacingMode = "environment"; // orqa kamera birinchi ustuvorlik
+
+// Eng yuqori o'lchamdan boshlab, qurilma qo'llab-quvvatlamasa pastroqqa
+// tushiladi (OverconstrainedError'dan qochish uchun).
+const CAMERA_RESOLUTION_ATTEMPTS = [
+  { width: { ideal: 4096 }, height: { ideal: 2160 } },
+  { width: { ideal: 1920 }, height: { ideal: 1080 } },
+  {}, // qurilma standart o'lchami — oxirgi zaxira
+];
 
 async function startCameraStream(facingMode) {
   // Avval eski oqimni to'xtatamiz — aks holda kamera band bo'lib qolishi mumkin.
   stopCameraStream();
-  cameraStream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: { ideal: facingMode } },
-    audio: false,
-  });
+
+  let lastErr = null;
+  for (const resolution of CAMERA_RESOLUTION_ATTEMPTS) {
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: facingMode }, ...resolution },
+        audio: false,
+      });
+      break;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (!cameraStream) throw lastErr || new Error("getUserMedia failed");
+
   cameraVideoEl.srcObject = cameraStream;
   await cameraVideoEl.play();
+
+  // ImageCapture — Chromium/Android WebView'da odatda qo'llab-quvvatlanadi
+  // va videoning display-resolution'idan emas, kameraning haqiqiy
+  // FOTOSURAT pipeline'idan (odatda ancha yuqori piksel) foydalanadi.
+  cameraImageCapture = null;
+  if ("ImageCapture" in window) {
+    try {
+      const track = cameraStream.getVideoTracks()[0];
+      cameraImageCapture = new ImageCapture(track);
+    } catch (_) {
+      cameraImageCapture = null;
+    }
+  }
 }
 
 function stopCameraStream() {
@@ -387,14 +430,19 @@ function stopCameraStream() {
     cameraStream.getTracks().forEach((track) => track.stop());
     cameraStream = null;
   }
+  cameraImageCapture = null;
   cameraVideoEl.srcObject = null;
 }
 
 async function openCameraCapture() {
-  // getUserMedia faqat xavfsiz kontekstda (https) va zamonaviy
-  // brauzerlarda mavjud. Mavjud bo'lmasa — native inputga zaxira.
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+  if (isIOSPlatform()) {
+    // iOS: native kamera — eng yuqori sifat, allaqachon ishonchli ishlaydi.
     cameraInput.click();
+    return;
+  }
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    cameraInput.click(); // getUserMedia mavjud bo'lmagan eski brauzer uchun zaxira
     return;
   }
   try {
@@ -403,8 +451,7 @@ async function openCameraCapture() {
   } catch (err) {
     // NotAllowedError (ruxsat berilmagan), NotFoundError (kamera yo'q)
     // va hokazo — foydalanuvchini bloklab qo'ymaslik uchun native
-    // inputga qaytamiz (Telegram bu holatda hech bo'lmasa Fayllar/
-    // Galereya orqali rasm tanlash imkonini beradi).
+    // inputga qaytamiz.
     console.error("Camera error:", err);
     stopCameraStream();
     cameraOverlay.classList.add("hidden");
@@ -436,27 +483,52 @@ cameraSwitchBtn.addEventListener("click", async () => {
   }
 });
 
-cameraShutterBtn.addEventListener("click", () => {
+// Video elementining joriy freymini canvas orqali yuqori sifatli
+// JPEG blob'ga aylantiradi — faqat ImageCapture mavjud bo'lmaganda
+// ishlatiladigan zaxira yo'l.
+function grabVideoFrameAsBlob() {
+  return new Promise((resolve) => {
+    const w = cameraVideoEl.videoWidth;
+    const h = cameraVideoEl.videoHeight;
+    if (!w || !h) return resolve(null);
+
+    cameraCanvasEl.width = w;
+    cameraCanvasEl.height = h;
+    const ctx = cameraCanvasEl.getContext("2d");
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(cameraVideoEl, 0, 0, w, h);
+    cameraCanvasEl.toBlob((blob) => resolve(blob), "image/jpeg", 0.95);
+  });
+}
+
+cameraShutterBtn.addEventListener("click", async () => {
   if (!cameraStream || activeSectionId === null) return;
-  const w = cameraVideoEl.videoWidth;
-  const h = cameraVideoEl.videoHeight;
-  if (!w || !h) return;
+  cameraShutterBtn.disabled = true;
+  try {
+    let blob = null;
 
-  cameraCanvasEl.width = w;
-  cameraCanvasEl.height = h;
-  const ctx = cameraCanvasEl.getContext("2d");
-  ctx.drawImage(cameraVideoEl, 0, 0, w, h);
+    // 1-ustuvorlik: ImageCapture.takePhoto() — to'liq fotosurat pipeline.
+    if (cameraImageCapture && typeof cameraImageCapture.takePhoto === "function") {
+      try {
+        blob = await cameraImageCapture.takePhoto();
+      } catch (err) {
+        console.error("ImageCapture.takePhoto xatosi, canvas fallback:", err);
+        blob = null;
+      }
+    }
 
-  cameraCanvasEl.toBlob(
-    (blob) => {
-      if (!blob) return;
-      const file = new File([blob], `photo_${Date.now()}.jpg`, { type: "image/jpeg" });
+    // 2-ustuvorlik: video-freymni canvas orqali yuqori sifatda olish.
+    if (!blob) blob = await grabVideoFrameAsBlob();
+
+    if (blob) {
+      const file = new File([blob], `photo_${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
       handlePickedFiles([file]);
       closeCameraCapture();
-    },
-    "image/jpeg",
-    0.92
-  );
+    }
+  } finally {
+    cameraShutterBtn.disabled = false;
+  }
 });
 
 // Ilova fonga o'tsa (Telegram'da boshqa oynaga o'tilsa) kamerani
