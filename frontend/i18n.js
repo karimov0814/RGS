@@ -42,7 +42,6 @@ const TRANSLATIONS = {
 
     sections_progress: "{done} / {total} bo'lim",
     add_photo_btn: "Rasm qo'shish",
-    camera_done_btn: "Tayyor",
     photo_count: "{n} ta rasm",
     comment_placeholder: "Izoh (ixtiyoriy)",
 
@@ -168,7 +167,6 @@ const TRANSLATIONS = {
 
     sections_progress: "{done} / {total} раздел",
     add_photo_btn: "Добавить фото",
-    camera_done_btn: "Готово",
     photo_count: "{n} фото",
     comment_placeholder: "Комментарий (необязательно)",
 
@@ -294,7 +292,6 @@ const TRANSLATIONS = {
 
     sections_progress: "{done} / {total} sections",
     add_photo_btn: "Add photo",
-    camera_done_btn: "Done",
     photo_count: "{n} photo(s)",
     comment_placeholder: "Comment (optional)",
 

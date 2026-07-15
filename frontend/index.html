@@ -143,23 +143,6 @@
   <!-- Yashirin: bitta bo'lim uchun rasm capture inputi (JS orqali dinamik ochiladi) -->
   <input type="file" id="camera-input" accept="image/*" capture="environment" style="display:none" />
 
-  <!-- Ichki kamera oynasi (getUserMedia orqali): Telegram Android WebView'da
-       native capture atributi ishlamagani uchun qo'lda video oqim ochamiz -->
-  <div id="camera-modal" class="camera-modal hidden">
-    <div class="camera-modal-inner">
-      <video id="camera-video" autoplay playsinline muted></video>
-      <canvas id="camera-canvas" style="display:none;"></canvas>
-      <div class="camera-modal-top">
-        <button id="camera-close-btn" class="camera-icon-btn" aria-label="Yopish"></button>
-        <span id="camera-shot-count" class="camera-shot-count"></span>
-      </div>
-      <div class="camera-modal-controls">
-        <button id="camera-shot-btn" class="camera-shot-btn" aria-label="Suratga olish"></button>
-      </div>
-      <button id="camera-done-btn" class="camera-done-btn" data-i18n="camera_done_btn">Tayyor</button>
-    </div>
-  </div>
-
 </div>
 
 <div id="overlay-loading" class="overlay hidden">
