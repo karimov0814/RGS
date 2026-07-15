@@ -344,6 +344,59 @@ async function selectChecklistType(checklistType) {
 // ---------- 2. Bo'limlar bo'yicha (bir nechta) rasm olish ----------
 let activeSectionId = null;
 const cameraInput = document.getElementById("camera-input");
+const galleryInput = document.getElementById("gallery-input");
+
+// ---------- Kamera / Galereya tanlash popup ----------
+// Telegram Android WebView "capture" atributini hisobga olmagani
+// uchun (root cause), foydalanuvchiga MODEL/OS'dan qat'i nazar
+// bir xil, aniq tanlov beriladi: Kamera yoki Galereya.
+function chooseAddPhotoSource() {
+  return new Promise((resolve) => {
+    const popupSupported =
+      typeof tg.showPopup === "function" &&
+      (typeof tg.isVersionAtLeast !== "function" || tg.isVersionAtLeast("6.2"));
+
+    if (popupSupported) {
+      tg.showPopup(
+        {
+          title: t("add_photo_popup_title"),
+          message: t("add_photo_popup_message"),
+          buttons: [
+            { id: "camera", type: "default", text: t("add_photo_camera_btn") },
+            { id: "gallery", type: "default", text: t("add_photo_gallery_btn") },
+            { id: "cancel", type: "cancel" },
+          ],
+        },
+        (buttonId) => {
+          resolve(buttonId === "camera" || buttonId === "gallery" ? buttonId : null);
+        }
+      );
+    } else {
+      // Juda eski Telegram klientlari uchun zaxira: to'g'ridan-to'g'ri
+      // galereyani ochamiz (kamera uchun capture'ga umid qilinmaydi).
+      resolve("gallery");
+    }
+  });
+}
+
+// Ikkala inputdan kelgan fayllarni bitta joyda qayta ishlash
+function handlePickedFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length || activeSectionId === null) return;
+
+  const existingComment = state.photos[activeSectionId][0]?.comment || "";
+  files.forEach((file) => {
+    state.photos[activeSectionId].push({
+      file,
+      previewUrl: URL.createObjectURL(file),
+      comment: existingComment,
+    });
+  });
+
+  renderSectionCard(activeSectionId);
+  updateProgress();
+  attachMainButton();
+}
 
 function renderSections() {
   const list = document.getElementById("section-list");
@@ -399,9 +452,15 @@ function renderSectionCard(sectionId) {
     ${isDone ? `<textarea class="comment-input" rows="2" placeholder="${t("comment_placeholder")}">${photos[0].comment || ""}</textarea>` : ""}
   `;
 
-  card.querySelector(".add-photo-btn").addEventListener("click", () => {
+  card.querySelector(".add-photo-btn").addEventListener("click", async () => {
     activeSectionId = sectionId;
-    cameraInput.click();
+    const choice = await chooseAddPhotoSource();
+    if (choice === "camera") {
+      cameraInput.click();
+    } else if (choice === "gallery") {
+      galleryInput.click();
+    }
+    // choice === null -> foydalanuvchi bekor qildi, hech narsa ochilmaydi
   });
 
   card.querySelectorAll(".remove-photo-btn").forEach((btn) => {
@@ -424,23 +483,13 @@ function renderSectionCard(sectionId) {
 }
 
 cameraInput.addEventListener("change", (e) => {
-  const files = Array.from(e.target.files || []);
-  if (!files.length || activeSectionId === null) return;
-
-  const existingComment = state.photos[activeSectionId][0]?.comment || "";
-  files.forEach((file) => {
-    state.photos[activeSectionId].push({
-      file,
-      previewUrl: URL.createObjectURL(file),
-      comment: existingComment,
-    });
-  });
-
-  renderSectionCard(activeSectionId);
-  updateProgress();
-  attachMainButton();
-
+  handlePickedFiles(e.target.files);
   cameraInput.value = ""; // qayta xuddi shu faylni tanlash imkonini saqlaydi
+});
+
+galleryInput.addEventListener("change", (e) => {
+  handlePickedFiles(e.target.files);
+  galleryInput.value = ""; // qayta xuddi shu faylni tanlash imkonini saqlaydi
 });
 
 function updateProgress() {

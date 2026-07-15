@@ -140,8 +140,22 @@
     </div>
   </section>
 
-  <!-- Yashirin: bitta bo'lim uchun rasm capture inputi (JS orqali dinamik ochiladi) -->
-<input type="file" id="camera-input" accept="image/*" capture style="display:none" />
+  <!--
+    Yashirin: bo'lim uchun rasm inputlari (JS orqali dinamik ochiladi).
+
+    MUHIM (Android/iOS farqi haqida izoh):
+    "capture" atributi iOS Safari/WKWebView'da kamerani to'g'ridan-to'g'ri
+    ochishga majbur qiladi, lekin Telegram Android ilovasining ichki
+    WebView fayl-tanlash mexanizmi (onShowFileChooser) bu atributni
+    hisobga olmaydi va har doim tizim chooser'ini (Galereya/Fayllar/Kamera)
+    ko'rsatadi. Shu sabab ikkita ALOHIDA input ishlatiladi: biri faqat
+    kamera uchun (capture bilan), ikkinchisi faqat galereya uchun
+    (capture'siz). Foydalanuvchiga tanlov popup orqali beriladi
+    (qarang: app.js -> chooseAddPhotoSource()).
+  -->
+  <input type="file" id="camera-input" accept="image/*" capture="environment" style="display:none" />
+  <input type="file" id="gallery-input" accept="image/*" multiple style="display:none" />
+
 </div>
 
 <div id="overlay-loading" class="overlay hidden">

@@ -42,6 +42,10 @@ const TRANSLATIONS = {
 
     sections_progress: "{done} / {total} bo'lim",
     add_photo_btn: "Rasm qo'shish",
+    add_photo_popup_title: "Rasm qo'shish",
+    add_photo_popup_message: "Rasmni qanday qo'shmoqchisiz?",
+    add_photo_camera_btn: "📷 Kamera",
+    add_photo_gallery_btn: "🖼 Galereya",
     photo_count: "{n} ta rasm",
     comment_placeholder: "Izoh (ixtiyoriy)",
 
@@ -167,6 +171,10 @@ const TRANSLATIONS = {
 
     sections_progress: "{done} / {total} раздел",
     add_photo_btn: "Добавить фото",
+    add_photo_popup_title: "Добавить фото",
+    add_photo_popup_message: "Как хотите добавить фото?",
+    add_photo_camera_btn: "📷 Камера",
+    add_photo_gallery_btn: "🖼 Галерея",
     photo_count: "{n} фото",
     comment_placeholder: "Комментарий (необязательно)",
 
@@ -292,6 +300,10 @@ const TRANSLATIONS = {
 
     sections_progress: "{done} / {total} sections",
     add_photo_btn: "Add photo",
+    add_photo_popup_title: "Add photo",
+    add_photo_popup_message: "How would you like to add a photo?",
+    add_photo_camera_btn: "📷 Camera",
+    add_photo_gallery_btn: "🖼 Gallery",
     photo_count: "{n} photo(s)",
     comment_placeholder: "Comment (optional)",
 
