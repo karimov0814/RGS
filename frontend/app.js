@@ -436,6 +436,21 @@ document.getElementById("btn-back-to-filial").addEventListener("click", async ()
   await refreshFilialList();
 });
 
+// Bo'limlar ekranidan orqaga — xodim adashib boshqa smena/filialni
+// tanlab qo'ygan bo'lsa, shu tugma orqali qaytib, TO'G'RI filial/smenani
+// tanlashi mumkin. Bu qadamning o'zi hech narsani o'chirmaydi — faqat
+// selectChecklistType() ichida, HAQIQATAN HAM boshqa smena tanlansa,
+// eski (yubormasdan qoldirgan) rasm/izohlar haqida ogohlantiriladi.
+document.getElementById("btn-back-to-checklist").addEventListener("click", () => {
+  if (!state.filial) {
+    showScreen("screen-filial");
+    return;
+  }
+  document.getElementById("checklist-filial-title").textContent = state.filial.name;
+  renderChecklistTypes();
+  showScreen("screen-checklist");
+});
+
 // Til almashtirilganda ekranda hozir ko'rinib turgan chek-list turlari /
 // bo'limlar nomlarini yangi tilda bazadan qayta yuklaydi (bular bazada
 // har bir til uchun alohida saqlanadi, shu sabab faqat statik matnlarni
@@ -469,6 +484,28 @@ async function refetchSections() {
 async function selectChecklistType(checklistType) {
   showLoading(t("loading_default"));
   try {
+    // Serverdagi joriy qoralamani tekshiramiz — agar u BOSHQA
+    // filial/smena uchun bo'lsa VA unda hali yubormasdan qolgan rasm(lar)
+    // bo'lsa, xodimni ogohlantirmasdan turib eskisini o'chirib
+    // yubormaymiz (chunki bu "yubormasdan botdan chiqib ketgan" holatdan
+    // farqli — bu yerda xodim ONGLI ravishda boshqasini tanlamoqda).
+    const draftRes = await fetch(`${API_BASE}/api/draft?init_data=${encodeURIComponent(initData)}&lang=${getLang()}`);
+    const draftData = draftRes.ok ? await draftRes.json() : { draft: null, photos: [] };
+    const existingDraft = draftData.draft;
+    const isSameSelection =
+      existingDraft && existingDraft.filial_id === state.filial.id && existingDraft.checklist_type_id === checklistType.id;
+
+    if (existingDraft && !isSameSelection && (draftData.photos || []).length > 0) {
+      hideLoading();
+      const proceed = await showConfirm(t("draft_discard_message"), {
+        title: t("draft_discard_title"),
+        confirmText: t("draft_discard_confirm"),
+        danger: true,
+      });
+      if (!proceed) return;
+      showLoading(t("loading_default"));
+    }
+
     const res = await fetch(
       `${API_BASE}/api/sections?init_data=${encodeURIComponent(initData)}&checklist_type_id=${checklistType.id}&filial_id=${state.filial.id}&lang=${getLang()}`
     );
@@ -477,7 +514,21 @@ async function selectChecklistType(checklistType) {
 
     state.checklistType = checklistType;
     state.sections = data.sections;
+
+    // Agar bu AYNAN o'sha qoralama bo'lsa (masalan xodim orqaga bosib,
+    // qayta xuddi shu filial+smenani tanlasa) — avvalgi rasmlarni
+    // yo'qotmasdan tiklaymiz. Aks holda (yangi tanlov) — bo'sh boshlanadi.
     state.photos = {};
+    if (isSameSelection) {
+      (draftData.photos || []).forEach((p) => {
+        if (!state.photos[p.section_id]) state.photos[p.section_id] = [];
+        state.photos[p.section_id].push({
+          id: p.id,
+          previewUrl: `${API_BASE}${p.image_url}`,
+          comment: p.comment || "",
+        });
+      });
+    }
 
     document.getElementById("filial-name-title").textContent = state.filial.name;
     document.getElementById("checklist-name-subtitle").textContent =
@@ -489,7 +540,9 @@ async function selectChecklistType(checklistType) {
 
     // Tanlov saqlanadi — shu tufayli botdan chiqib ketilsa/ilova yopilsa
     // ham, qaytib kirganda aynan shu filial+chek-list turi bilan davom
-    // etadi (rasm olishni boshlashdan oldin ham).
+    // etadi (rasm olishni boshlashdan oldin ham). Agar tanlov haqiqatan
+    // ham o'zgargan bo'lsa, bu chaqiruv backendda eski (mos kelmaydigan)
+    // qoralama rasmlarini ham tozalaydi.
     saveDraftMeta(state.filial.id, checklistType.id);
   } catch (e) {
     hideLoading();

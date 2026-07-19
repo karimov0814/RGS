@@ -40,6 +40,11 @@ const TRANSLATIONS = {
     checklist_back_btn: "Filialni o'zgartirish",
     checklist_none: "Hozircha chek-list turi sozlanmagan",
 
+    sections_back_btn: "Boshqa filial/smena tanlash",
+    draft_discard_title: "Diqqat",
+    draft_discard_message: "Joriy tanlov uchun kiritilgan rasm/izohlar hali yuborilmagan. Boshqa filial yoki smena tanlasangiz, ular butunlay o'chirib tashlanadi. Davom etasizmi?",
+    draft_discard_confirm: "Ha, boshqasini tanlayman",
+
     sections_progress: "{done} / {total} bo'lim",
     add_photo_btn: "Rasm qo'shish",
     camera_permission_denied: "Kameraga ruxsat berilmadi yoki u mavjud emas. Fayl tanlash ekrani ochiladi.",
@@ -166,6 +171,11 @@ const TRANSLATIONS = {
     checklist_back_btn: "Изменить филиал",
     checklist_none: "Тип чек-листа пока не настроен",
 
+    sections_back_btn: "Выбрать другой филиал/смену",
+    draft_discard_title: "Внимание",
+    draft_discard_message: "Фото/комментарии для текущего выбора ещё не отправлены. Если выберете другой филиал или смену, они будут полностью удалены. Продолжить?",
+    draft_discard_confirm: "Да, выбрать другое",
+
     sections_progress: "{done} / {total} раздел",
     add_photo_btn: "Добавить фото",
     camera_permission_denied: "Доступ к камере не предоставлен или она недоступна. Откроется выбор файла.",
@@ -291,6 +301,11 @@ const TRANSLATIONS = {
     checklist_subtitle: "Select checklist type",
     checklist_back_btn: "Change branch",
     checklist_none: "No checklist type configured yet",
+
+    sections_back_btn: "Choose a different branch/shift",
+    draft_discard_title: "Attention",
+    draft_discard_message: "The photos/comments for your current selection haven't been sent yet. Choosing a different branch or shift will permanently delete them. Continue?",
+    draft_discard_confirm: "Yes, choose another",
 
     sections_progress: "{done} / {total} sections",
     add_photo_btn: "Add photo",

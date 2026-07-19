@@ -10,6 +10,7 @@ Muhit o'zgaruvchilari (.env):
 import json
 import os
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 # Server (Railway) UTC bo'yicha ishlaydi, lekin filiallar O'zbekiston
 # vaqti (UTC+5, Asia/Tashkent) bo'yicha ishlaydi. Shu sababli xabarlardagi
@@ -208,7 +209,7 @@ async def get_draft(init_data: str, lang: str = "uz"):
             "id": p["id"],
             "section_id": p["section_id"],
             "comment": p["comment"] or "",
-            "image_url": f"/api/draft/photo/{p['id']}/image?init_data={init_data}",
+            "image_url": f"/api/draft/photo/{p['id']}/image?init_data={quote(init_data, safe='')}",
         }
         for p in photos
     ]
@@ -266,7 +267,7 @@ async def post_draft_photo(
             "id": photo["id"],
             "section_id": photo["section_id"],
             "comment": photo["comment"] or "",
-            "image_url": f"/api/draft/photo/{photo['id']}/image?init_data={init_data}",
+            "image_url": f"/api/draft/photo/{photo['id']}/image?init_data={quote(init_data, safe='')}",
         },
     }
 
