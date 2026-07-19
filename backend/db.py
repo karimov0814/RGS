@@ -534,16 +534,20 @@ async def set_draft_meta(telegram_user_id: int, filial_id: Optional[int],
 
 
 async def add_draft_photo(telegram_user_id: int, section_id: int, comment: Optional[str],
-                           filename: str, content_type: str, photo_data: bytes) -> dict:
+                           filename: str, content_type: str, telegram_file_id: str) -> dict:
+    """E'TIBOR: rasmning bayti (photo_data) endi bu yerga YOZILMAYDI —
+    rasm allaqachon Telegramga (xodimning shaxsiy chatiga, zaxira sifatida)
+    yuborilgan va uning `telegram_file_id`si shu yerda saqlanadi. Shu
+    tufayli Postgres hech qachon rasm baytlari bilan to'lib qolmaydi."""
     pool = await get_pool()
     draft = await get_or_create_draft(telegram_user_id)
     row = await pool.fetchrow(
         """
-        INSERT INTO draft_photos (draft_id, section_id, comment, filename, content_type, photo_data)
+        INSERT INTO draft_photos (draft_id, section_id, comment, filename, content_type, telegram_file_id)
         VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING id, draft_id, section_id, comment, filename, content_type, created_at
         """,
-        draft["id"], section_id, comment, filename, content_type, photo_data,
+        draft["id"], section_id, comment, filename, content_type, telegram_file_id,
     )
     await pool.execute("UPDATE drafts SET updated_at = now() WHERE id = $1", draft["id"])
     return dict(row)
@@ -552,8 +556,8 @@ async def add_draft_photo(telegram_user_id: int, section_id: int, comment: Optio
 async def list_draft_photos(telegram_user_id: int) -> list[dict]:
     """Qoralamadagi rasmlar ro'yxati — rasm BAYTLARISIZ (faqat metadata),
     ilova ochilganda tez yuklash uchun. Rasmning o'zi kerak bo'lsa
-    (masalan preview yoki yakuniy yuborish uchun) get_draft_photo /
-    get_draft_photo_bytes ishlatiladi."""
+    (masalan preview yoki yakuniy yuborish uchun) get_draft_photo
+    ishlatiladi."""
     pool = await get_pool()
     rows = await pool.fetch(
         """
@@ -570,11 +574,17 @@ async def list_draft_photos(telegram_user_id: int) -> list[dict]:
 
 async def get_draft_photo(photo_id: int, telegram_user_id: int) -> Optional[dict]:
     """Egalikni ham tekshiradi — boshqa xodim boshqasining rasmini
-    (hatto id'sini bilib olsa ham) ko'ra/o'chira olmasligi uchun."""
+    (hatto id'sini bilib olsa ham) ko'ra/o'chira olmasligi uchun.
+
+    `telegram_file_id` bo'lsa — rasm Telegramda saqlangan (yangi holat).
+    `photo_data` bo'lsa — bu ESKI (migratsiyadan oldingi) qator, hali
+    bazada baytlari bilan turibdi; orqaga moslik uchun ikkalasi ham
+    qaytariladi, chaqiruvchi kerakligini tanlaydi."""
     pool = await get_pool()
     row = await pool.fetchrow(
         """
-        SELECT dp.id, dp.draft_id, dp.section_id, dp.comment, dp.filename, dp.content_type, dp.photo_data
+        SELECT dp.id, dp.draft_id, dp.section_id, dp.comment, dp.filename, dp.content_type,
+               dp.telegram_file_id, dp.photo_data
         FROM draft_photos dp
         JOIN drafts d ON d.id = dp.draft_id
         WHERE dp.id = $1 AND d.telegram_user_id = $2
@@ -593,7 +603,15 @@ async def update_draft_photo_comment(photo_id: int, telegram_user_id: int, comme
         """,
         photo_id, telegram_user_id, comment,
     )
-    return result.endswith(" 1")
+    changed = result.endswith(" 1")
+    if changed:
+        # 15 daqiqalik TTL juda qisqa bo'lgani uchun, xodim faol ishlab
+        # turgan bo'lsa (garchi yangi rasm qo'shmasa ham — masalan faqat
+        # izohni tahrirlasa) qoralama vaqti hisobi qayta boshlanishi kerak.
+        await pool.execute(
+            "UPDATE drafts SET updated_at = now() WHERE telegram_user_id = $1", telegram_user_id
+        )
+    return changed
 
 
 async def delete_draft_photo(photo_id: int, telegram_user_id: int) -> bool:
@@ -605,7 +623,12 @@ async def delete_draft_photo(photo_id: int, telegram_user_id: int) -> bool:
         """,
         photo_id, telegram_user_id,
     )
-    return result.endswith(" 1")
+    changed = result.endswith(" 1")
+    if changed:
+        await pool.execute(
+            "UPDATE drafts SET updated_at = now() WHERE telegram_user_id = $1", telegram_user_id
+        )
+    return changed
 
 
 async def clear_draft(telegram_user_id: int) -> None:
@@ -614,3 +637,21 @@ async def clear_draft(telegram_user_id: int) -> None:
     yoki xodim "boshidan boshlash"ni tanlaganda chaqiriladi."""
     pool = await get_pool()
     await pool.execute("DELETE FROM drafts WHERE telegram_user_id = $1", telegram_user_id)
+
+
+async def cleanup_stale_drafts(max_age_minutes: int = 15) -> int:
+    """XODIM TASHLAB QO'YGAN (uzoq vaqt davomida hech narsa qo'shmagan/
+    yangilamagan) qoralamalarni avtomatik o'chiradi — CASCADE orqali
+    ularning draft_photos qatorlari (va, agar bo'lsa, eski bayt
+    ma'lumotlari) ham birga o'chadi. Shu fon vazifasi bo'lmasa, hech
+    qachon yuborilmagan/tugallanmagan qoralamalar bazada abadiy qolib,
+    Postgres hajmini asta-sekin to'ldirib boraveradi.
+
+    15 daqiqa — shu muddatdan ortiq "tegilmagan" (yangi rasm qo'shilmagan/
+    yangilanmagan) qoralama avtomatik o'chiriladi."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "DELETE FROM drafts WHERE updated_at < now() - ($1 || ' minutes')::interval RETURNING id",
+        str(max_age_minutes),
+    )
+    return len(rows)

@@ -66,6 +66,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+async def _draft_cleanup_loop():
+    """Xodim tashlab qo'ygan (15 daqiqadan ortiq yangilanmagan)
+    qoralamalarni davriy ravishda avtomatik o'chirib turadi. Bu
+    bo'lmasa, hech qachon yuborilmagan qoralamalar bazada abadiy qolib,
+    Postgres hajmini (Railway volume) asta-sekin to'ldirib boraveradi.
+
+    DIQQAT: 15 daqiqa juda qisqa muddat — agar xodim shuncha vaqtdan
+    ortiq ilovadan chiqib tursa, hozirgacha olingan rasmlari o'chib
+    ketadi va qaytadan boshlashga to'g'ri keladi."""
+    while True:
+        try:
+            deleted = await db.cleanup_stale_drafts(max_age_minutes=15)
+            if deleted:
+                print(f"[draft_cleanup] {deleted} ta eskirgan (15+ daqiqa tegilmagan) qoralama tozalandi")
+        except Exception as e:  # noqa: BLE001
+            print("[draft_cleanup] xatolik:", e)
+        await asyncio.sleep(2 * 60)  # har 2 daqiqada bir marta tekshiradi
+
+
 @app.on_event("startup")
 async def _startup():
     """Railway'da har deployda jadvallar mavjudligini avtomatik ta'minlaydi
@@ -92,17 +111,19 @@ async def _startup():
     # Shu tufayli alohida "worker" process/Railway-service kerak bo'lmaydi —
     # bitta web-service ichida ishlab turadi.
     app.state.bot_listener_task = asyncio.create_task(bot_listener.run_polling())
+    app.state.draft_cleanup_task = asyncio.create_task(_draft_cleanup_loop())
 
 
 @app.on_event("shutdown")
 async def _shutdown():
-    task = getattr(app.state, "bot_listener_task", None)
-    if task:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    for task_name in ("bot_listener_task", "draft_cleanup_task"):
+        task = getattr(app.state, task_name, None)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     await db.close_pool()
 
 
@@ -247,19 +268,24 @@ async def post_draft_photo(
     file: UploadFile = File(...),
 ):
     """Rasm olingan ZAHOTI (foydalanuvchi "Yuborish"ni bosishidan ancha
-    oldin) darhol serverga saqlaydi — shu tufayli ilova favqulodda
-    yopilib qolsa ham rasm yo'qolmaydi."""
+    oldin) darhol Telegramga (xodimning botga shaxsiy chatiga, zaxira
+    sifatida) yuboriladi va qaytgan file_id bazaga yoziladi — shu tufayli
+    ilova favqulodda yopilib qolsa ham rasm yo'qolmaydi, VA bazada
+    rasmning og'ir baytlari saqlanmaydi (Postgres hajmi to'lib qolmaydi)."""
     user = await _check_auth(init_data)
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Bo'sh fayl")
+
+    sent = await tg.send_draft_photo_to_owner(user["id"], data, file.filename or "photo.jpg")
+
     photo = await db.add_draft_photo(
         telegram_user_id=user["id"],
         section_id=section_id,
         comment=comment.strip() or None,
         filename=file.filename or "photo.jpg",
         content_type=file.content_type or "image/jpeg",
-        photo_data=data,
+        telegram_file_id=sent["file_id"],
     )
     return {
         "ok": True,
@@ -276,12 +302,25 @@ async def post_draft_photo(
 async def get_draft_photo_image(photo_id: int, init_data: str):
     """Qoralamadagi rasmni ko'rsatish uchun (masalan ilova qayta
     ochilganda avvalgi rasmlar preview'ini tiklash). Faqat rasmning
-    egasi (o'sha telegram_user_id) ko'ra oladi."""
+    egasi (o'sha telegram_user_id) ko'ra oladi.
+
+    Rasm bazada emas, Telegramda saqlangani uchun, shu yerda Telegramdan
+    qayta yuklab olinadi va to'g'ridan-to'g'ri brauzerga uzatiladi
+    (hech qayerda saqlanmaydi) — eski (migratsiyadan oldingi) qatorlar
+    uchun esa hali bazadagi baytlar bilan ishlayveradi."""
     user = await _check_auth(init_data)
     photo = await db.get_draft_photo(photo_id, user["id"])
     if not photo:
         raise HTTPException(status_code=404, detail="Rasm topilmadi")
-    return Response(content=photo["photo_data"], media_type=photo["content_type"] or "image/jpeg")
+
+    if photo.get("telegram_file_id"):
+        image_bytes = await tg.download_file_bytes(photo["telegram_file_id"])
+    elif photo.get("photo_data"):
+        image_bytes = photo["photo_data"]
+    else:
+        raise HTTPException(status_code=404, detail="Rasm topilmadi")
+
+    return Response(content=image_bytes, media_type=photo["content_type"] or "image/jpeg")
 
 
 @app.put("/api/draft/photo/{photo_id}")
@@ -464,31 +503,31 @@ async def submit(
         if comment:
             caption += f"\n💬 {comment}"
 
-        # Rasm baytlarini shu paytda (yuborish arafasida) bazadan o'qiymiz —
-        # ular allaqachon /api/draft/photo orqali saqlangan.
+        # Rasmlarni shu paytda (yuborish arafasida) bazadan o'qiymiz —
+        # ular allaqachon /api/draft/photo orqali Telegramga (xodimning
+        # shaxsiy chatiga) yuborilgan, shuning uchun odatda faqat
+        # `telegram_file_id` (kichkina matn) bo'ladi — QAYTA yuklash
+        # shart emas. Faqat migratsiyadan oldingi ESKI qatorlarda hali
+        # xom baytlar (`photo_data`) bo'lishi mumkin — ular uchun ham
+        # orqaga moslik saqlangan.
         photo_payload = []
         for p in photos_meta:
             full_photo = await db.get_draft_photo(p["id"], user["id"])
             if not full_photo:
                 continue
-            photo_payload.append((full_photo["photo_data"], full_photo["filename"] or "photo.jpg"))
+            if full_photo.get("telegram_file_id"):
+                photo_payload.append({"file_id": full_photo["telegram_file_id"]})
+            elif full_photo.get("photo_data"):
+                photo_payload.append({"data": full_photo["photo_data"], "filename": full_photo["filename"] or "photo.jpg"})
 
         if not photo_payload:
             continue
 
-        if len(photo_payload) == 1:
-            sent_list = [await tg.send_photo_to_topic(
-                thread_id=thread_id,
-                photo_bytes=photo_payload[0][0],
-                filename=photo_payload[0][1],
-                caption=caption,
-            )]
-        else:
-            sent_list = await tg.send_media_group_to_topic(
-                thread_id=thread_id,
-                photos=photo_payload,
-                caption=caption,
-            )
+        sent_list = await tg.send_media_group_to_topic(
+            thread_id=thread_id,
+            items=photo_payload,
+            caption=caption,
+        )
 
         for p, sent in zip(photos_meta, sent_list):
             item_comment = (p.get("comment") or "").strip()

@@ -492,8 +492,22 @@ CREATE TABLE IF NOT EXISTS draft_photos (
     comment       TEXT,
     filename      TEXT,
     content_type  TEXT,
-    photo_data    BYTEA NOT NULL,
+    photo_data    BYTEA,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_draft_photos_draft_id ON draft_photos(draft_id);
+
+-- ------------------------------------------------------------
+--  Railway'dagi Postgres volume to'lib qolmasligi uchun:
+--  Rasmning BAYTLARI endi bazada emas, xodimning botga shaxsiy
+--  chatida ("zaxira nusxa" sifatida) saqlanadi — bazada esa faqat
+--  o'sha xabarning kichik `telegram_file_id`si (matn) turadi.
+--  Eski (shu ustun qo'shilishidan oldingi) qatorlarda `photo_data`
+--  hali ham to'ldirilgan bo'lishi mumkin — shu sabab `photo_data`
+--  NOT NULL'dan chiqarildi (ALTER — ilgari yaratilgan bazalar uchun),
+--  ular bilan orqaga moslik saqlanadi va migrate_draft_photos.py
+--  skripti orqali asta-sekin `telegram_file_id`ga o'tkaziladi.
+-- ------------------------------------------------------------
+ALTER TABLE draft_photos ADD COLUMN IF NOT EXISTS telegram_file_id TEXT;
+ALTER TABLE draft_photos ALTER COLUMN photo_data DROP NOT NULL;
