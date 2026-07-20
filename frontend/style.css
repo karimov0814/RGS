@@ -386,6 +386,18 @@ html, body {
   color: var(--bg, #fff);
   border-color: var(--text);
 }
+.admin-checklist-tab-wrap {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.admin-checklist-tab-edit {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  opacity: 0.6;
+}
+.admin-checklist-tab-edit:hover { opacity: 1; }
 .admin-tab-btn {
   flex: 1;
   padding: 10px 6px;

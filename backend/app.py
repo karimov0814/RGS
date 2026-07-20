@@ -696,12 +696,37 @@ async def admin_link_filial_thread(
     return {"ok": True, "filial": updated}
 
 
-# ---------- Chek-list turlari (o'qish uchun) ----------
+# ---------- Chek-list turlari ----------
 
 @app.get("/api/admin/checklist-types")
 async def admin_list_checklist_types(init_data: str):
     await _check_superadmin(init_data)
     return {"checklist_types": await db.list_all_checklist_types()}
+
+
+@app.put("/api/admin/checklist-types/{checklist_type_id}")
+async def admin_update_checklist_type(
+    checklist_type_id: int,
+    init_data: str = Form(...),
+    name: str = Form(...),
+    lang: str = Form("uz"),
+):
+    """Superadmin smena nomini (masalan "Smena ochilishi" -> "Ochilish
+    smenasi") FAQAT o'zi tanlagan interfeys tilida (`lang`) kiritadi —
+    qolgan ikkita til uchun nom bo'lim nomlari kabi avtomatik tarjima
+    qilinadi. `key` (opening/handover/closing) o'zgarmaydi — u faqat
+    kod ichida ishlatiladigan doimiy identifikator."""
+    await _check_superadmin(init_data)
+    lang = _norm_lang(lang)
+    name = name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Smena nomini kiriting")
+
+    names = await translate_utils.translate_to_all_langs(name, lang)
+    checklist_type = await db.update_checklist_type_name(checklist_type_id, names["uz"], names["ru"], names["en"])
+    if not checklist_type:
+        raise HTTPException(status_code=404, detail="Chek-list turi topilmadi")
+    return {"ok": True, "checklist_type": checklist_type}
 
 
 # ---------- Bo'limlar (har bir chek-list turi uchun alohida) ----------

@@ -1313,6 +1313,9 @@ async function initAdminSections() {
       adminSelectedChecklistTypeId = types[0].id;
     }
     types.forEach((ct) => {
+      const wrap = document.createElement("div");
+      wrap.className = "admin-checklist-tab-wrap";
+
       const btn = document.createElement("button");
       btn.className = "admin-tab-btn" + (ct.id === adminSelectedChecklistTypeId ? " active" : "");
       btn.textContent = `${CHECKLIST_TYPE_EMOJI[ct.key] || "📋"} ${pickLocalized(ct)}`;
@@ -1322,7 +1325,19 @@ async function initAdminSections() {
         btn.classList.add("active");
         loadAdminSections();
       });
-      subtabsEl.appendChild(btn);
+
+      const editBtn = document.createElement("button");
+      editBtn.className = "icon-btn admin-checklist-tab-edit";
+      editBtn.setAttribute("aria-label", t("edit_label"));
+      editBtn.innerHTML = iconMarkup("edit");
+      editBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        editChecklistType(ct);
+      });
+
+      wrap.appendChild(btn);
+      wrap.appendChild(editBtn);
+      subtabsEl.appendChild(wrap);
     });
     await loadAdminSections();
   } catch (e) {
@@ -1516,6 +1531,32 @@ async function editSection(s) {
       body: adminForm({ name: result.name, lang: getLang(), is_active: s.is_active }),
     });
     await loadAdminSections();
+  } catch (e) {
+    await showAlert(t("error_prefix") + e.message);
+  } finally {
+    hideLoading();
+  }
+}
+
+// Superadmin smena nomini (masalan "Smena ochilishi") tahrirlaydi —
+// bo'lim nomini tahrirlash bilan bir xil naqsh: faqat joriy tilda
+// kiritiladi, qolgan ikki til avtomatik tarjima qilinadi. `key`
+// (opening/handover/closing) o'zgarmaydi.
+async function editChecklistType(ct) {
+  const result = await showPrompt({
+    title: t("checklist_type_edit_title"),
+    confirmText: t("btn_save"),
+    fields: [{ id: "name", label: t("checklist_type_name_label"), value: pickLocalized(ct) }],
+  });
+  if (!result || !result.name) return;
+
+  showLoading(t("loading_saving"));
+  try {
+    await adminFetch(`/api/admin/checklist-types/${ct.id}`, {
+      method: "PUT",
+      body: adminForm({ name: result.name, lang: getLang() }),
+    });
+    await initAdminSections();
   } catch (e) {
     await showAlert(t("error_prefix") + e.message);
   } finally {

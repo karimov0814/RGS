@@ -261,6 +261,22 @@ async def get_checklist_type(checklist_type_id: int, lang: str = "uz"):
     return d
 
 
+async def update_checklist_type_name(checklist_type_id: int, name_uz: str, name_ru: str, name_en: str) -> Optional[dict]:
+    """Superadmin smena nomini (masalan "Smena ochilishi") tahrirlaganda
+    chaqiriladi — `key` (kodda ishlatiladigan doimiy identifikator)
+    o'zgarmaydi, faqat foydalanuvchiga ko'rinadigan 3 tildagi nom."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        UPDATE checklist_types SET name_uz = $2, name_ru = $3, name_en = $4
+        WHERE id = $1
+        RETURNING id, key, name_uz, name_ru, name_en, sort_order, is_active
+        """,
+        checklist_type_id, name_uz or None, name_ru or None, name_en or None,
+    )
+    return dict(row) if row else None
+
+
 # ---------- Bo'limlar (har biri bitta chek-list turiga tegishli) ----------
 
 async def list_active_sections(checklist_type_id: int, lang: str = "uz", filial_id: Optional[int] = None):
