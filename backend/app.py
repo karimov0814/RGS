@@ -34,6 +34,7 @@ import asyncpg
 
 import db
 import telegram_utils as tg
+from telegram_utils import TelegramTopicMissingError
 import bot_listener
 import translate_utils
 
@@ -138,6 +139,26 @@ async def _shutdown():
 async def health():
     # Railway health-check va domenni tekshirish uchun
     return {"status": "ok", "service": "filial-feedback-backend"}
+
+
+# ============================================================
+#  MUHIM TUZATISH: kutilmagan (kod ichida try/except bilan ushlanmagan)
+#  har qanday xato ilgari FastAPI'ning standart "500 Internal Server
+#  Error" javobini (bo'sh yoki oddiy matn, JSON EMAS) qaytarardi.
+#  Frontend esa javobni HAR DOIM JSON deb kutib, uni ochib bo'lmagach
+#  xom (foydalanuvchiga tushunarsiz) matnni ko'rsatardi — natijada
+#  "Yuborish" xatolik bilan tugagach XODIM SABABINI umuman bilolmasdi.
+#  Endi har qanday kutilmagan xato ham izchil JSON ko'rinishida
+#  ({"detail": "..."}), tushunarli matn bilan qaytariladi.
+# ============================================================
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request, exc: Exception):
+    from fastapi.responses import JSONResponse
+    print(f"[unhandled] {request.method} {request.url.path}: {exc!r}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Kutilmagan xatolik yuz berdi. Qayta urinib ko'ring."},
+    )
 
 
 def _check_init_data(init_data: str) -> dict:
@@ -488,7 +509,17 @@ async def submit(
         thread_id = fresh["thread_id"] if fresh else None
 
     if not thread_id:
-        new_thread_id = await tg.create_forum_topic(filial["name"])
+        try:
+            new_thread_id = await tg.create_forum_topic(filial["name"])
+        except Exception as e:  # noqa: BLE001
+            print(f"[submit] topic yaratishda xato (filial={filial_id}): {e}")
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Filial uchun Telegram mavzusini ochib bo'lmadi (aloqa "
+                    "muammosi). Internetni tekshirib, qayta 'Yuborish'ni bosing."
+                ),
+            ) from e
         # Atomik "claim": faqat thread_id hali NULL bo'lsagina o'rnatiladi.
         # Shu bilan bir vaqtda kelgan boshqa so'rov ikkinchi marta topic
         # yaratib yubormaydi.
@@ -570,11 +601,50 @@ async def submit(
         if not photo_payload:
             continue
 
-        sent_list = await tg.send_media_group_to_topic(
-            thread_id=thread_id,
-            items=photo_payload,
-            caption=caption,
-        )
+        # MUHIM TUZATISH: agar guruhdagi topic admin tomonidan qo'lda
+        # o'chirib yuborilgan bo'lsa (yoki boshqa sababdan Telegramda
+        # endi mavjud bo'lmasa), Telegram "message thread not found"
+        # xatosini qaytaradi va OLDIN bu SHU YERDA (yoki oldingi
+        # bo'limlarda) hisobotni BUTUNLAY to'xtatib qo'yardi — xodim
+        # nechta marta "Yuborish"ni bossa ham hech qachon guruhga
+        # yetib bormasdi, chunki bazadagi eskirgan thread_id hech qachon
+        # tuzatilmasdi. Endi shu xato ushlanadi: yangi topic yaratiladi,
+        # bazadagi thread_id yangilanadi va yuborish shu yangi topicga
+        # BIR MARTA qayta uriniladi.
+        try:
+            sent_list = await tg.send_media_group_to_topic(
+                thread_id=thread_id,
+                items=photo_payload,
+                caption=caption,
+            )
+        except TelegramTopicMissingError:
+            new_thread_id = await tg.create_forum_topic(filial["name"])
+            await db.set_filial_thread_id(filial_id, new_thread_id)
+            thread_id = new_thread_id
+            sent_list = await tg.send_media_group_to_topic(
+                thread_id=thread_id,
+                items=photo_payload,
+                caption=caption,
+            )
+        except Exception as e:  # noqa: BLE001
+            # Boshqa har qanday kutilmagan xato (tarmoq, Telegram
+            # tomonidagi muammo va h.k.) — foydalanuvchiga TUSHUNARLI
+            # xabar bilan qaytariladi (ilgari FastAPI buni umumiy "500
+            # Internal Server Error" qilib ko'rsatardi, xodim sababini
+            # bilolmasdi). Shu paytgacha muvaffaqiyatli yuborilgan
+            # bo'limlar qoralamadan allaqachon o'chirilgan bo'lgani
+            # uchun, xodim qayta "Yuborish"ni bossa faqat QOLGAN
+            # bo'limlar qayta uriniladi — hech narsa ikki marta
+            # yuborilmaydi.
+            print(f"[submit] bo'lim {section_id} yuborishda xato: {e}")
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Guruhga yuborishda xatolik yuz berdi (Telegram bilan "
+                    "aloqa muammosi). Internetni tekshirib, qayta 'Yuborish'ni "
+                    "bosing — allaqachon yuborilgan rasmlar qayta yuborilmaydi."
+                ),
+            ) from e
 
         for p, sent in zip(photos_meta, sent_list):
             item_comment = (p.get("comment") or "").strip()

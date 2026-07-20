@@ -20,11 +20,22 @@ const initData = tg.initData; // backendga validatsiya uchun yuboriladi
 //  Endi shu darajadagi vaqtinchalik xatoliklar sezilmasdan avtomatik
 //  qayta uriniladi.
 // ============================================================
-async function fetchWithRetry(url, options = {}, retries = 2, backoffMs = 900) {
+// MUHIM TUZATISH: ilgari `fetch()` hech qanday timeout'siz chaqirilardi.
+// iPhone (WKWebView) va ba'zi Android tarmoqlarida ulanish "osilib qolishi"
+// (na muvaffaqiyat, na xato — javob umuman kelmasligi) odatiy hol, ayniqsa
+// mobil ilova fondan qaytganda yoki tarmoq turi (wifi<->mobil) almashganda.
+// Bunday holatda foydalanuvchi "Yuborish" tugmasi cheksiz aylanib turgan
+// holatda qolib ketardi va hech qanday xato ko'rsatilmasdi. Endi har bir
+// urinish uchun aniq vaqt chegarasi (`timeoutMs`) qo'yiladi — shu vaqtda
+// javob kelmasa, so'rov bekor qilinib (AbortController), qayta uriniladi.
+async function fetchWithRetry(url, options = {}, retries = 2, backoffMs = 900, timeoutMs = 25000) {
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(url, options);
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timer);
       // 5xx — server tomonidagi vaqtinchalik muammo bo'lishi mumkin, qayta urinamiz.
       if (res.status >= 500 && attempt < retries) {
         lastErr = new Error(`HTTP ${res.status}`);
@@ -33,8 +44,11 @@ async function fetchWithRetry(url, options = {}, retries = 2, backoffMs = 900) {
       }
       return res;
     } catch (err) {
-      // Tarmoq xatosi (masalan uzilib qolgan ulanish) — qayta urinamiz.
-      lastErr = err;
+      clearTimeout(timer);
+      // Tarmoq xatosi yoki timeout (uzilib/osilib qolgan ulanish) — qayta urinamiz.
+      lastErr = err && err.name === "AbortError"
+        ? new Error("So'rov javob bermadi (internet aloqasi sekin yoki uzilgan)")
+        : err;
       if (attempt < retries) {
         await new Promise((r) => setTimeout(r, backoffMs * (attempt + 1)));
         continue;
@@ -1021,7 +1035,7 @@ async function submitReport() {
     formData.append("checklist_type_id", state.checklistType.id);
     formData.append("lang", getLang());
 
-    const res = await fetchWithRetry(`${API_BASE}/api/submit`, { method: "POST", body: formData }, 2, 1200);
+    const res = await fetchWithRetry(`${API_BASE}/api/submit`, { method: "POST", body: formData }, 3, 1500, 40000);
     if (!res.ok) {
       const bodyText = await res.text();
       let detail = bodyText;
