@@ -525,6 +525,28 @@ async def get_or_create_draft(telegram_user_id: int) -> dict:
     return dict(row)
 
 
+async def ensure_draft_meta(telegram_user_id: int, filial_id: Optional[int], checklist_type_id: Optional[int]) -> None:
+    """`set_draft_meta`dan farqli o'laroq — bu funksiya HECH QACHON
+    mavjud qiymatni bosib yozmaydi (faqat hali NULL bo'lgan joyni
+    to'ldiradi, COALESCE orqali) va rasmlarni HECH QACHON tozalamaydi.
+    Rasm yuklash so'rovidan "xavfsizlik to'ri" sifatida chaqiriladi —
+    agar alohida saveDraftMeta so'rovi biror sababdan hali ulgurmagan/
+    muvaffaqiyatsiz bo'lgan bo'lsa ham, qoralamaning filial/smena
+    ma'lumoti bo'sh qolib ketmasin uchun."""
+    pool = await get_pool()
+    await get_or_create_draft(telegram_user_id)  # qator mavjudligini kafolatlaydi
+    await pool.execute(
+        """
+        UPDATE drafts
+        SET filial_id = COALESCE(filial_id, $2),
+            checklist_type_id = COALESCE(checklist_type_id, $3),
+            updated_at = now()
+        WHERE telegram_user_id = $1
+        """,
+        telegram_user_id, filial_id, checklist_type_id,
+    )
+
+
 async def set_draft_meta(telegram_user_id: int, filial_id: Optional[int],
                           checklist_type_id: Optional[int], lang: str) -> dict:
     """Foydalanuvchi filial/chek-list turini tanlaganda chaqiriladi —

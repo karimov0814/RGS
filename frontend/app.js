@@ -139,6 +139,12 @@ async function uploadDraftPhoto(sectionId, comment, file) {
   fd.append("section_id", sectionId);
   fd.append("comment", comment || "");
   fd.append("file", file, file.name || "photo.jpg");
+  // Filial/smena ID'sini HAR BIR rasm bilan birga ham yuboramiz — shunda
+  // qoralamaning filial/smena ma'lumoti alohida saveDraftMeta() so'rovi
+  // muvaffaqiyatli bo'lishiga bog'liq bo'lib qolmaydi (o'z-o'zini
+  // tuzatadigan / "self-healing" qiladi).
+  if (state.filial) fd.append("filial_id", state.filial.id);
+  if (state.checklistType) fd.append("checklist_type_id", state.checklistType.id);
   const res = await fetchWithRetry(`${API_BASE}/api/draft/photo`, { method: "POST", body: fd });
   if (!res.ok) throw new Error(await res.text());
   const data = await res.json();
@@ -535,16 +541,17 @@ async function selectChecklistType(checklistType) {
     document.getElementById("checklist-name-subtitle").textContent =
       `${CHECKLIST_TYPE_EMOJI[checklistType.key] || "📋"} ${checklistType.name}`;
 
+    // Tanlov saqlanadi (KUTIB, ya'ni bo'limlar ekrani ko'rsatilishidan
+    // OLDIN) — shu tufayli xodim bo'limlar ekraniga tushgan zahoti rasm
+    // olishni boshlasa ham, qoralama filial/smenasi bazada ALLAQACHON
+    // to'g'ri o'rnatilgan bo'ladi (poyga holati bo'lmaydi). Agar tanlov
+    // haqiqatan ham o'zgargan bo'lsa, bu chaqiruv backendda eski (mos
+    // kelmaydigan) qoralama rasmlarini ham tozalaydi.
+    await saveDraftMeta(state.filial.id, checklistType.id);
+
     hideLoading();
     renderSections();
     showScreen("screen-sections");
-
-    // Tanlov saqlanadi — shu tufayli botdan chiqib ketilsa/ilova yopilsa
-    // ham, qaytib kirganda aynan shu filial+chek-list turi bilan davom
-    // etadi (rasm olishni boshlashdan oldin ham). Agar tanlov haqiqatan
-    // ham o'zgargan bo'lsa, bu chaqiruv backendda eski (mos kelmaydigan)
-    // qoralama rasmlarini ham tozalaydi.
-    saveDraftMeta(state.filial.id, checklistType.id);
   } catch (e) {
     hideLoading();
     await showAlert(t("error_load_sections"));
@@ -769,26 +776,67 @@ document.addEventListener("visibilitychange", () => {
 //  muvaffaqiyatsiz bo'lsa, asl fayl o'zgarishsiz yuboriladi (funksiya
 //  hech qachon xato bermaydi).
 // ============================================================
-async function compressImageForUpload(file, maxDimension = 1600, quality = 0.82) {
+// ============================================================
+//  Rasmni yuklashdan OLDIN brauzerning o'zida siqish — MAKSIMAL 1 MB.
+//
+//  Qoida: agar rasm allaqachon 1 MB'dan kichik bo'lsa — TEGILMAYDI
+//  (asl sifatida qoladi). Agar 1 MB'dan katta bo'lsa — sifat va (kerak
+//  bo'lsa) o'lchamni bosqichma-bosqich pasaytirib, natija 1 MB yoki
+//  undan kichik bo'lguncha siqiladi.
+//
+//  Muammo: Android'da kamera orqali olingan rasmlar odatda TO'LIQ
+//  o'lchamda (ko'pincha 8-15 MB) qaytadi — iPhone'da esa brauzer buni
+//  odatda avtomatik siqib yuboradi. Bunday katta fayllar Telegram'ning
+//  rasm yuborish chegarasidan (10 MB) oshib ketishi, yoki sekin mobil
+//  internetda so'rovni "uzilib qolishga" yaqinlashtirishi mumkin edi.
+// ============================================================
+const MAX_UPLOAD_BYTES = 1 * 1024 * 1024; // 1 MB
+
+async function compressImageForUpload(file, maxDimension = 2000) {
   if (!file || !file.type || !file.type.startsWith("image/")) return file;
+  // Allaqachon 1 MB'dan kichik — tegmaymiz, asl fayl o'zgarishsiz yuboriladi.
+  if (file.size <= MAX_UPLOAD_BYTES) return file;
+
   try {
     const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
-    // Fayl allaqachon kichik va sifat pasaytirishning ma'nosi yo'q bo'lsa — tegmaymiz.
-    if (scale >= 1 && file.size <= 1.5 * 1024 * 1024) return file;
 
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    // Sifat (0.85 dan pastga) va, agar sifatning o'zi yetmasa, o'lcham
+    // (tomonlarni qisqartirib) bosqichma-bosqich pasaytiriladi — natija
+    // 1 MB'ga tushguncha yoki chegaralarga yetguncha davom etadi.
+    const qualitySteps = [0.85, 0.7, 0.55, 0.4, 0.3];
+    let dimension = Math.min(maxDimension, Math.max(bitmap.width, bitmap.height));
+    const minDimension = 640; // undan pastga tushirib sifatni juda ham buzmaymiz
 
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
-    if (!blob) return file;
-    // Siqilgan natija asl fayldan KATTA chiqib qolsa (kamdan-kam, lekin
-    // mumkin) — asl faylni ishlatamiz.
-    if (blob.size >= file.size) return file;
-    return new File([blob], (file.name || "photo").replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" });
+    let bestBlob = null;
+    while (true) {
+      const scale = Math.min(1, dimension / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+
+      for (const quality of qualitySteps) {
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+        if (!blob) continue;
+        if (!bestBlob || blob.size < bestBlob.size) bestBlob = blob;
+        if (blob.size <= MAX_UPLOAD_BYTES) {
+          return new File([blob], (file.name || "photo").replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" });
+        }
+      }
+
+      // Eng past sifatda ham 1 MB'dan katta bo'lsa — o'lchamni yana kichraytirib qayta urinamiz.
+      if (dimension <= minDimension) break;
+      dimension = Math.round(dimension * 0.75);
+    }
+
+    // 1 MB'ga hech qanday kombinatsiyada tushirib bo'lmadi (juda kam
+    // uchraydigan holat) — shunga qaramay, topilgan ENG KICHIK natijani
+    // ishlatamiz (baribir asl fayldan ancha yengilroq bo'ladi).
+    if (bestBlob && bestBlob.size < file.size) {
+      return new File([bestBlob], (file.name || "photo").replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" });
+    }
+    return file;
   } catch (_) {
     return file; // Canvas/createImageBitmap qo'llab-quvvatlanmasa — asl faylni yuboramiz
   }
@@ -974,7 +1022,17 @@ async function submitReport() {
     formData.append("lang", getLang());
 
     const res = await fetchWithRetry(`${API_BASE}/api/submit`, { method: "POST", body: formData }, 2, 1200);
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) {
+      const bodyText = await res.text();
+      let detail = bodyText;
+      try {
+        const parsed = JSON.parse(bodyText);
+        detail = parsed.detail || bodyText;
+      } catch (_) {
+        // JSON emas — xom matnning o'zi ishlatiladi
+      }
+      throw new Error(`HTTP ${res.status}: ${detail}`);
+    }
 
     state.photos = {};
 
@@ -990,7 +1048,10 @@ async function submitReport() {
     tg.HapticFeedback.notificationOccurred("error");
     // Rasmlar serverda xavfsiz saqlanib qolgani uchun, xodim shunchaki
     // "Yuborish"ni qayta bosishi mumkin — hech narsa qaytadan olinmaydi.
-    await showAlert(t("error_submit"));
+    // Xatoning ANIQ matnini ham ko'rsatamiz — shu bilan muammo takrorlansa,
+    // xodim skrinshot orqali aniq sababni yuborishi mumkin bo'ladi
+    // (umumiy "xatolik" deyishning o'rniga).
+    await showAlert(`${t("error_submit")}\n\n${e.message || e}`);
   }
 }
 

@@ -273,16 +273,32 @@ async def post_draft_photo(
     section_id: int = Form(...),
     comment: str = Form(""),
     file: UploadFile = File(...),
+    filial_id: Optional[int] = Form(None),
+    checklist_type_id: Optional[int] = Form(None),
 ):
     """Rasm olingan ZAHOTI (foydalanuvchi "Yuborish"ni bosishidan ancha
     oldin) darhol Telegramga (xodimning botga shaxsiy chatiga, zaxira
     sifatida) yuboriladi va qaytgan file_id bazaga yoziladi — shu tufayli
     ilova favqulodda yopilib qolsa ham rasm yo'qolmaydi, VA bazada
-    rasmning og'ir baytlari saqlanmaydi (Postgres hajmi to'lib qolmaydi)."""
+    rasmning og'ir baytlari saqlanmaydi (Postgres hajmi to'lib qolmaydi).
+
+    MUHIM TUZATISH: `filial_id`/`checklist_type_id` endi shu so'rov bilan
+    HAM yuboriladi (frontend filial/smenani tanlaganda alohida saqlash
+    so'rovi bilan bir qatorda). Agar o'sha alohida so'rov biror sababdan
+    (tarmoq, poyga holati) hali ulgurmagan/muvaffaqiyatsiz bo'lgan bo'lsa,
+    shu yerda ham qoralamaning filial/smena ma'lumoti "o'zi tuzatiladi"
+    (faqat hali bo'sh bo'lsa to'ldiriladi, hech qachon mavjud to'g'ri
+    qiymatni bosib yozmaydi) — aks holda "Yuborish" bosilganda backend
+    bazadagi (bo'sh qolib ketgan) filial/smena bilan solishtirib mos
+    kelmadi deb rad etardi, garchi foydalanuvchi ekranda hammasini
+    to'g'ri tanlagan bo'lsa ham."""
     user = await _check_auth(init_data)
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Bo'sh fayl")
+
+    if filial_id is not None or checklist_type_id is not None:
+        await db.ensure_draft_meta(user["id"], filial_id, checklist_type_id)
 
     sent = await tg.send_draft_photo_to_owner(user["id"], data, file.filename or "photo.jpg")
 
@@ -380,6 +396,27 @@ CHECKLIST_TYPE_EMOJI = {
     "handover": "🔄",
     "closing": "🔒",
 }
+
+
+def _html_escape(text: str) -> str:
+    """Telegramga `parse_mode: HTML` bilan yuboriladigan caption'lar ichiga
+    qo'yiladigan HAR QANDAY dinamik matnni (filial nomi, bo'lim nomi,
+    xodimning izohi, ismi va h.k.) xavfsizlantiradi.
+
+    MUHIM BUG TUZATILDI: agar bunday matnlarda `<`, `>` yoki `&` belgisi
+    bo'lsa (masalan xodim izohga "5<10" yoki "narx & sifat" deb yozsa),
+    Telegram buni yaroqsiz HTML deb hisoblab, BUTUN XABARNI rad etar edi
+    — natijada "Yuborish" xatolik bilan tugar edi. Bu hech qanday
+    qurilmaga (Android/iPhone) bog'liq emas edi, faqat izoh/nom matniga
+    bog'liq edi — shu sabab ba'zan bitta qurilmada, ba'zan ikkalasida
+    ham chiqib turardi."""
+    if not text:
+        return text
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
 
 
 @app.post("/api/submit")
@@ -504,14 +541,14 @@ async def submit(
         comment = (photos_meta[0].get("comment") or "").strip()
 
         caption = (
-            f"🏢 <b>{filial['name']}</b>\n"
-            f"{checklist_emoji} <b>{checklist_type['name']}</b>\n"
-            f"🕒 {now_str}\n👤 {full_name}"
+            f"🏢 <b>{_html_escape(filial['name'])}</b>\n"
+            f"{checklist_emoji} <b>{_html_escape(checklist_type['name'])}</b>\n"
+            f"🕒 {now_str}\n👤 {_html_escape(full_name)}"
         )
         if section_name:
-            caption += f"\n📍 Bo'lim: {section_name}"
+            caption += f"\n📍 Bo'lim: {_html_escape(section_name)}"
         if comment:
-            caption += f"\n💬 {comment}"
+            caption += f"\n💬 {_html_escape(comment)}"
 
         # Rasmlarni shu paytda (yuborish arafasida) bazadan o'qiymiz —
         # ular allaqachon /api/draft/photo orqali Telegramga (xodimning
