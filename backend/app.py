@@ -97,33 +97,105 @@ def _norm_lang(lang: Optional[str]) -> str:
 #  oddiy dict yetarli; qiymatlar RATE_LIMIT_WINDOW ichida o'z-o'zidan
 #  eskiradi. Chegaralar env orqali sozlanadi.
 # ============================================================
-RATE_LIMIT_MAX = int(os.environ.get("PHOTO_RATE_LIMIT_MAX", "40"))       # oynadagi maksimal yuklash
+RATE_LIMIT_MAX = int(os.environ.get("PHOTO_RATE_LIMIT_MAX", "60"))       # oynadagi maksimal yuklash
 RATE_LIMIT_WINDOW = int(os.environ.get("PHOTO_RATE_LIMIT_WINDOW", "60"))  # oyna (soniya)
+# Yuborish endi juda yengil (faqat bazaga yozadi), lekin baribir cheklaymiz —
+# ilgari bu endpointda cheklov umuman yo'q edi.
+SUBMIT_RATE_LIMIT = int(os.environ.get("SUBMIT_RATE_LIMIT", "10"))
 _rate_hits: dict[int, list[float]] = {}
+_rate_last_sweep = 0.0
 
 
-def _check_rate_limit(user_id: int) -> None:
+def _check_rate_limit(user_id: int, limit: int | None = None) -> None:
     """user_id uchun sirpanuvchi-oyna cheklovini tekshiradi. Chegaradan
-    oshsa 429 (Too Many Requests) ko'taradi."""
+    oshsa 429 (Too Many Requests) ko'taradi.
+
+    TUZATILDI: tozalash mantig'i ilgari amalda ishlamasdi — u faqat
+    `len(_rate_hits) > 5000` bo'lganda va faqat BO'SH ro'yxatli kalitlarni
+    o'chirardi; ro'yxat esa faqat o'sha foydalanuvchi QAYTA so'rov
+    yuborganda tozalanardi. Ya'ni bir marta kirgan foydalanuvchi kaliti
+    abadiy qolib, xotira asta-sekin oqardi. Endi tozalash VAQT bo'yicha:
+    har daqiqada oynadan tashqarida qolgan barcha kalitlar o'chiriladi."""
+    global _rate_last_sweep
+    limit = limit or RATE_LIMIT_MAX
     now = time.monotonic()
-    hits = _rate_hits.get(user_id)
-    if hits is None:
-        hits = []
-        _rate_hits[user_id] = hits
-    # Oynadan tashqaridagi eski urinishlarni tozalaymiz.
     cutoff = now - RATE_LIMIT_WINDOW
+
+    if now - _rate_last_sweep > 60:
+        _rate_last_sweep = now
+        for uid in [uid for uid, ts in _rate_hits.items() if not ts or ts[-1] <= cutoff]:
+            _rate_hits.pop(uid, None)
+
+    hits = _rate_hits.setdefault(user_id, [])
     hits[:] = [t for t in hits if t > cutoff]
-    if len(hits) >= RATE_LIMIT_MAX:
+    if len(hits) >= limit:
         raise HTTPException(
             status_code=429,
             detail="Juda ko'p so'rov yuborildi. Bir oz kutib, qayta urinib ko'ring.",
         )
     hits.append(now)
-    # Xotira cheksiz o'smasligi uchun: bo'sh kalitlarni vaqti-vaqti bilan
-    # tozalaymiz (oddiy, arzon tozalash — faqat kalit ko'payib ketsa).
-    if len(_rate_hits) > 5000:
-        for uid in [uid for uid, ts in _rate_hits.items() if not ts]:
-            _rate_hits.pop(uid, None)
+
+
+# ============================================================
+#  FAYL HAJMI CHEGARASI (BLOKER tuzatildi)
+#
+#  Ilgari `await file.read()` faylni to'liq RAM'ga o'qirdi va hech qanday
+#  chegara yo'q edi. O'lchov: 4 ta parallel 100 MB yuklash server
+#  xotirasini 66 MB dan 958 MB ga ko'tardi — Railway'ning 512 MB
+#  konteynerida bu OOM-kill demak, ya'ni bitta xodim xizmatni to'xtatib
+#  qo'yishi mumkin edi.
+#
+#  Endi fayl 64 KB'lik bo'laklar bilan o'qiladi va chegaradan oshgan
+#  zahoti uziladi — server hech qachon chegaradan ko'p xotira
+#  band qilmaydi. Telegram'ning o'z chegarasi 10 MB, shuning uchun
+#  undan kattasini qabul qilishning ma'nosi ham yo'q.
+# ============================================================
+MAX_PHOTO_BYTES = int(os.environ.get("MAX_PHOTO_BYTES", str(10 * 1024 * 1024)))
+_CHUNK = 64 * 1024
+
+# Rasm formatlarining "magic bytes"lari — Telegram faqat rasmni qabul
+# qiladi, shuning uchun boshqa fayl turlarini shu yerda rad etamiz.
+_IMAGE_SIGNATURES = (
+    b"\xff\xd8\xff",                 # JPEG
+    b"\x89PNG\r\n\x1a\n",            # PNG
+    b"GIF87a", b"GIF89a",            # GIF
+    b"BM",                           # BMP
+)
+
+
+def _looks_like_image(head: bytes) -> bool:
+    if any(head.startswith(sig) for sig in _IMAGE_SIGNATURES):
+        return True
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":       # WEBP
+        return True
+    if head[4:8] == b"ftyp" and head[8:12] in (b"heic", b"heix", b"hevc", b"mif1", b"msf1"):
+        return True                                          # HEIC (iPhone)
+    return False
+
+
+async def _read_upload_limited(file: UploadFile) -> bytes:
+    """Yuklanayotgan faylni chegara bilan o'qiydi. Chegaradan oshsa
+    o'qishni DARHOL to'xtatadi va 413 qaytaradi."""
+    buf = bytearray()
+    while True:
+        chunk = await file.read(_CHUNK)
+        if not chunk:
+            break
+        buf.extend(chunk)
+        if len(buf) > MAX_PHOTO_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(f"Rasm juda katta (maksimal {MAX_PHOTO_BYTES // (1024*1024)} MB). "
+                        "Qaytadan suratga oling yoki sifatini pasaytiring."),
+            )
+    if not buf:
+        raise HTTPException(status_code=400, detail="Bo'sh fayl")
+    if not _looks_like_image(bytes(buf[:16])):
+        raise HTTPException(
+            status_code=400,
+            detail="Faqat rasm yuborish mumkin (JPEG, PNG, HEIC).",
+        )
+    return bytes(buf)
 
 # Mini app boshqa domenda joylashgan bo'lishi mumkin (masalan GitHub Pages / Railway static)
 app.add_middleware(
@@ -132,6 +204,191 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ============================================================
+#  1) YETKAZISH WORKER'I — navbatni (outbox) Telegramga bo'shatadi.
+#
+#  Bu "hisobot yuborilmay qolyapti" muammosining asosiy yechimi.
+#  Ilgari "Yuborish" bosilganda barcha rasmlar SHU SO'ROV ichida
+#  Telegramga yuborilardi. Telegram bitta guruhga daqiqasiga ~20 ta
+#  xabar qabul qiladi, smena almashinuvida esa 10 xodim × 8 bo'lim = 80
+#  xabar bir zumda urinardi — hammasi flood-control'ga tushib, hisobot
+#  xatolik bilan tugardi (o'lchov: 10 xodimdan 0 tasi yubora oldi).
+#
+#  Endi so'rov faqat navbatga yozadi va darhol qaytadi. Shu worker esa
+#  navbatni Telegram tezligida, xatolarni qayta urinish bilan bo'shatadi.
+#  Xodim kutmaydi, xato ko'rmaydi, va hech narsa yo'qolmaydi.
+# ============================================================
+OUTBOX_MAX_ATTEMPTS = int(os.environ.get("OUTBOX_MAX_ATTEMPTS", "12"))
+OUTBOX_IDLE_SLEEP = float(os.environ.get("OUTBOX_IDLE_SLEEP", "1.0"))
+
+
+async def _resolve_thread_id(filial_id: int, filial_name: str) -> int:
+    """Filialning forum-topic'ini topadi, kerak bo'lsa yaratadi.
+
+    TUZATILDI: ilgari topic YARATISH atomik "claim"dan OLDIN bajarilardi,
+    shuning uchun bir vaqtda kelgan 3 ta so'rov Telegramda 3 ta topic
+    yaratardi va bazaga faqat bittasi yozilardi — guruhda "yetim" bo'sh
+    mavzular qolib ketardi. Endi butun blok advisory lock ichida: bir
+    vaqtning o'zida faqat bitta jarayon topic yaratadi."""
+    filial = await db.get_filial(filial_id)
+    if filial and filial.get("thread_id"):
+        return filial["thread_id"]
+
+    # Filial qatorini qulflab, ikkinchi marta tekshiramiz va faqat
+    # shundan keyin topic yaratamiz — shu bilan guruhda "yetim" bo'sh
+    # mavzular paydo bo'lmaydi. Butun blok BITTA ulanishda (ichkarida
+    # pool'dan qo'shimcha ulanish so'ralmaydi).
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            row = await db.claim_thread_slot(conn, filial_id)
+            if row and row.get("thread_id"):
+                return row["thread_id"]
+            new_thread_id = await tg.create_forum_topic(filial_name)
+            await db.set_thread_id_conn(conn, filial_id, new_thread_id)
+            log.info("filial #%s uchun yangi topic yaratildi: %s", filial_id, new_thread_id)
+            return new_thread_id
+
+
+async def _deliver_outbox_item(item: dict) -> None:
+    """Navbatdagi bitta yozuvni (bitta bo'lim = bitta albom) yetkazadi."""
+    photos = item["photos"]
+    if isinstance(photos, str):
+        photos = json.loads(photos)
+    payload = [{"file_id": p["file_id"]} for p in photos if p.get("file_id")]
+    if not payload:
+        await db.mark_outbox_sent(item["id"])
+        return
+
+    thread_id = await _resolve_thread_id(item["filial_id"], item["filial_name"])
+
+    try:
+        sent_list = await tg.send_media_group_to_topic(
+            thread_id=thread_id, items=payload, caption=item["caption"])
+    except TelegramTopicMissingError:
+        # Topic guruhda o'chirib yuborilgan — yangisini yaratib, BIR
+        # marta qayta uramiz. TUZATILDI: ilgari bu ikkinchi urinishning
+        # xatosi hech qayerda ushlanmasdi va 500 bilan tugardi.
+        log.warning("outbox #%s: topic topilmadi, qayta yaratilmoqda", item["id"])
+        new_thread_id = await tg.create_forum_topic(item["filial_name"])
+        await db.set_filial_thread_id(item["filial_id"], new_thread_id)
+        sent_list = await tg.send_media_group_to_topic(
+            thread_id=new_thread_id, items=payload, caption=item["caption"])
+
+    # Bazaga yozamiz. TUZATILDI: ilgari `zip(photos_meta, sent_list)`
+    # ishlatilardi va ro'yxatlar uzunligi mos kelmasa izohlar noto'g'ri
+    # rasmga biriktirilardi. Endi indeks bo'yicha xavfsiz moslashtiramiz.
+    for idx, sent in enumerate(sent_list):
+        meta = photos[idx] if idx < len(photos) else {}
+        try:
+            await db.add_submission_photo(
+                submission_id=item["submission_id"],
+                section_id=item["section_id"],
+                file_id=sent["file_id"],
+                comment=(meta.get("comment") or None),
+                sent_message_id=sent["message_id"],
+            )
+        except asyncpg.ForeignKeyViolationError:
+            # Bo'lim oradan o'chirilgan — rasm guruhga yetib bordi,
+            # shuning uchun buni xato deb hisoblamaymiz.
+            log.warning("outbox #%s: section %s endi mavjud emas, yozuv o'tkazib yuborildi",
+                        item["id"], item["section_id"])
+
+    await db.mark_outbox_sent(item["id"])
+
+    # Zaxira nusxalarni o'chirish NAVBATIGA qo'yamiz (fire-and-forget emas).
+    await db.enqueue_deletions(
+        [(item["telegram_user_id"], p["backup_message_id"])
+         for p in photos if p.get("backup_message_id")])
+
+
+async def _notify_if_complete(submission_id: int, telegram_user_id: int) -> None:
+    """Hisobotning barcha bo'limlari yetkazilganda xodimga bir marta
+    xabar beramiz. Xodim "Yuborish"dan keyin darhol muvaffaqiyat
+    ekranini ko'radi, bu esa yetkazish HAQIQATAN tugaganini tasdiqlaydi."""
+    state = await db.submission_delivery_state(submission_id)
+    if state["pending"]:
+        return
+    if state["failed"]:
+        if await db.set_submission_delivery(submission_id, "failed"):
+            await tg.send_text_message(
+                telegram_user_id,
+                "⚠️ Hisobotingizning bir qismini guruhga yuborib bo'lmadi. "
+                "Iltimos, administratorga xabar bering.")
+    else:
+        if await db.set_submission_delivery(submission_id, "delivered"):
+            await tg.send_text_message(
+                telegram_user_id, "✅ Hisobotingiz guruhga muvaffaqiyatli yuborildi.")
+
+
+async def _outbox_worker():
+    log.info("outbox worker ishga tushdi")
+    while True:
+        try:
+            item = await db.take_next_outbox()
+            if item is None:
+                await asyncio.sleep(OUTBOX_IDLE_SLEEP)
+                continue
+            try:
+                await _deliver_outbox_item(item)
+                await _notify_if_complete(item["submission_id"], item["telegram_user_id"])
+            except tg.TelegramFloodError as e:
+                # Vaqtinchalik — Telegram so'ragan muddatdan keyin qayta uramiz.
+                await db.reschedule_outbox(item["id"], e.retry_after + 2, str(e))
+            except Exception as e:  # noqa: BLE001
+                if item["attempts"] >= OUTBOX_MAX_ATTEMPTS:
+                    log.error("outbox #%s: %d urinishdan keyin ham yetkazilmadi: %r",
+                              item["id"], item["attempts"], e)
+                    await db.mark_outbox_failed(item["id"], repr(e))
+                    await _notify_if_complete(item["submission_id"], item["telegram_user_id"])
+                else:
+                    delay = min(300, 5 * (2 ** min(item["attempts"], 6)))
+                    log.warning("outbox #%s xato (urinish %d), %ss dan keyin qayta: %r",
+                                item["id"], item["attempts"], delay, e)
+                    await db.reschedule_outbox(item["id"], delay, repr(e))
+        except asyncio.CancelledError:
+            log.info("outbox worker to'xtatildi")
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.error("outbox worker kutilmagan xato: %r", e)
+            await asyncio.sleep(3)
+
+
+# ============================================================
+#  2) ZAXIRA NUSXALARNI O'CHIRISH WORKER'I
+#
+#  "Yuborilgan hisobotlarning bir nechtasi zaxira nusxa bo'lib qolib
+#  ketyapti" muammosining yechimi. Ilgari o'chirish
+#  `asyncio.create_task(...)` bilan yuborilardi (natija saqlanmasdi —
+#  Python bunday task'ni tugashidan oldin yig'ishtirib yuborishi mumkin)
+#  va `delete_message` har qanday xatoni jimgina yutardi. Band paytda
+#  Telegram 429 qaytarsa, o'chirish shunchaki yo'qolardi.
+#  O'lchov: 80 ta zaxira nusxadan 25 tasi o'chirilmay qoldi.
+#
+#  Endi har bir o'chirish bazadagi navbatda turadi va bajarilgunicha
+#  qayta uriniladi.
+# ============================================================
+async def _deletion_worker():
+    log.info("zaxira-nusxa tozalash worker'i ishga tushdi")
+    while True:
+        try:
+            items = await db.take_due_deletions(limit=10)
+            if not items:
+                await db.drop_exhausted_deletions()
+                await asyncio.sleep(3)
+                continue
+            for it in items:
+                ok = await tg.delete_message(it["chat_id"], it["message_id"])
+                if ok:
+                    await db.finish_deletion(it["id"])
+        except asyncio.CancelledError:
+            log.info("tozalash worker'i to'xtatildi")
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.error("tozalash worker'i xatosi: %r", e)
+            await asyncio.sleep(5)
+
 
 async def _draft_cleanup_loop():
     """Xodim tashlab qo'ygan (15 daqiqadan ortiq yangilanmagan)
@@ -144,17 +401,18 @@ async def _draft_cleanup_loop():
     ketadi va qaytadan boshlashga to'g'ri keladi."""
     while True:
         try:
-            # Avval o'chirilishi kutilayotgan qoralamalarning zaxira
-            # xabarlari ro'yxatini olamiz (bazadan o'chgandan keyin bu
-            # ma'lumot yo'qoladi), keyin bazadan o'chiramiz, so'ng har
-            # bir xabarni xodimning shaxsiy chatidan ham tozalaymiz.
-            pending_messages = await db.get_stale_draft_photo_messages(max_age_minutes=DRAFT_TTL_MINUTES)
-            deleted = await db.cleanup_stale_drafts(max_age_minutes=DRAFT_TTL_MINUTES)
-            for msg in pending_messages:
-                await tg.delete_message(msg["telegram_user_id"], msg["telegram_message_id"])
+            # TUZATILDI: zaxira xabarlari endi BITTA TRANZAKSIYADA doimiy
+            # o'chirish navbatiga ko'chiriladi va shundan keyingina
+            # qoralama bazadan o'chiriladi. Ilgari bu ikki qadam alohida
+            # edi va oradagi har qanday xato "qaysi xabarni o'chirish
+            # kerak" ma'lumotini butunlay yo'qotardi. Telegramga
+            # o'chirish so'rovlarini bu sikl endi umuman yubormaydi —
+            # buni alohida worker cheklovga rioya qilib bajaradi.
+            deleted = await db.stale_drafts_to_deletion_queue(max_age_minutes=DRAFT_TTL_MINUTES)
             if deleted:
                 log.info("draft_cleanup: %d ta eskirgan (%d+ daqiqa tegilmagan) qoralama tozalandi",
                          deleted, DRAFT_TTL_MINUTES)
+            await db.purge_old_outbox(days=7)
         except Exception as e:  # noqa: BLE001
             log.warning("draft_cleanup xatolik: %r", e)
         await asyncio.sleep(DRAFT_CLEANUP_INTERVAL_SECONDS)
@@ -187,15 +445,21 @@ async def _startup():
     # bitta web-service ichida ishlab turadi.
     app.state.bot_listener_task = asyncio.create_task(bot_listener.run_polling())
     app.state.draft_cleanup_task = asyncio.create_task(_draft_cleanup_loop())
+    app.state.outbox_task = asyncio.create_task(_outbox_worker())
+    app.state.deletion_task = asyncio.create_task(_deletion_worker())
+
+    stats = await db.outbox_stats()
     log.info(
-        "startup tayyor: draft TTL=%d daqiqa, cleanup interval=%ds, rate-limit=%d/%ds",
+        "startup tayyor: draft TTL=%d daq, cleanup=%ds, rate-limit=%d/%ds, "
+        "maks rasm=%d MB | navbatda: %d ta yetkazish, %d ta tozalash",
         DRAFT_TTL_MINUTES, DRAFT_CLEANUP_INTERVAL_SECONDS, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW,
+        MAX_PHOTO_BYTES // (1024 * 1024), stats["pending"], stats["deletions"],
     )
 
 
 @app.on_event("shutdown")
 async def _shutdown():
-    for task_name in ("bot_listener_task", "draft_cleanup_task"):
+    for task_name in ("bot_listener_task", "draft_cleanup_task", "outbox_task", "deletion_task"):
         task = getattr(app.state, task_name, None)
         if task:
             task.cancel()
@@ -203,6 +467,7 @@ async def _shutdown():
                 await task
             except asyncio.CancelledError:
                 pass
+    await tg.close_client()
     await db.close_pool()
 
 
@@ -390,9 +655,23 @@ async def post_draft_photo(
     to'g'ri tanlagan bo'lsa ham."""
     user = await _check_auth(init_data)
     _check_rate_limit(user["id"])
-    data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="Bo'sh fayl")
+
+    # TUZATILDI: bo'lim mavjudligi va tanlangan smenaga tegishliligi endi
+    # SHU YERDA tekshiriladi. Ilgari hech qanday tekshiruv yo'q edi va
+    # yaroqsiz section_id "zaharlangan qoralama" hosil qilardi: rasm
+    # guruhga yuborilardi, keyin bazaga yozishda FK xatosi chiqib 500
+    # qaytarardi, qoralama esa o'chirilmasdi — xodim har "Yuborish"
+    # bosganda guruhga yana bitta ortiqcha rasm tushardi va u hech qachon
+    # hisobotni yakunlay olmasdi.
+    draft_now = await db.get_draft(user["id"])
+    expected_type = checklist_type_id or (draft_now or {}).get("checklist_type_id")
+    if not await db.section_belongs_to(section_id, expected_type):
+        raise HTTPException(
+            status_code=400,
+            detail="Bo'lim topilmadi yoki bu smenaga tegishli emas. Sahifani yangilab ko'ring.",
+        )
+
+    data = await _read_upload_limited(file)
 
     if filial_id is not None or checklist_type_id is not None:
         await db.ensure_draft_meta(user["id"], filial_id, checklist_type_id)
@@ -463,8 +742,11 @@ async def delete_draft_photo(photo_id: int, init_data: str):
     result = await db.delete_draft_photo(photo_id, user["id"])
     if not result:
         raise HTTPException(status_code=404, detail="Rasm topilmadi")
+    # Zaxira nusxani o'chirishni NAVBATGA qo'yamiz — javobni kutib
+    # turmaydi, lekin bajarilgunicha qayta uriniladi (ilgari bu yerda
+    # javob kutilardi va xato jimgina yutilardi).
     if result.get("telegram_message_id"):
-        await tg.delete_message(result["telegram_user_id"], result["telegram_message_id"])
+        await db.enqueue_deletion(result["telegram_user_id"], result["telegram_message_id"])
     return {"ok": True}
 
 
@@ -523,242 +805,159 @@ async def submit(
     checklist_type_id: int = Form(...),
     lang: str = Form("uz"),
 ):
-    """E'TIBOR: rasmlar bu so'rovda YUKLANMAYDI. Ular xodim rasm olgan
-    zahoti /api/draft/photo orqali allaqachon serverga saqlangan bo'ladi
-    — bu yerda faqat o'sha qoralamadagi rasmlarni Telegram guruhiga
-    jo'natish sodir bo'ladi. Shu tufayli bu so'rov juda yengil (fayl
-    yo'q, faqat bir nechta ID/matn) va sekin yoki beqaror internetda
-    ham muvaffaqiyatli yetib borish ehtimoli ancha yuqori — avval
-    xodim BARCHA rasmlarni bitta og'ir so'rovda qayta yuklashi kerak
-    edi, shu sabab ko'p rasmli/sekin internetli holatlarda so'rov
-    uzilib qolib, "xatolik" chiqib, faqat botni qayta ishga tushirgach
-    ishlashi mumkin edi."""
+    """Hisobotni YETKAZISH NAVBATIGA qo'yadi va darhol qaytadi.
+
+    ============================================================
+    ASOSIY O'ZGARISH — "hisobot yuborilmay qolyapti" muammosining yechimi
+    ============================================================
+    Ilgari bu funksiya barcha rasmlarni SHU SO'ROV ichida, bo'lim-bo'lim
+    Telegram guruhiga yuborardi. Telegram bitta guruhga daqiqasiga ~20 ta
+    xabar qabul qiladi; smena almashinuvida 10 xodim × 8 bo'lim = 80
+    xabar bir zumda urinardi. Natijada:
+      - Telegram 429 (flood control) qaytarardi;
+      - eski kod `retry_after` ni 10 soniyaga cheklab, erta qayta urinardi
+        va yana 429 olardi;
+      - so'rov 40 soniyadan oshib ketardi, frontend uni bekor qilib
+        avtomatik 3 marta QAYTA yuborardi — bu esa yukni yanada oshirardi;
+      - oxir-oqibat xodim "Telegram bilan aloqa muammosi" xatosini
+        ko'rardi, hisobot esa guruhga umuman yetib bormasdi.
+    O'lchov (10 xodim, 8 bo'lim): 10 tadan 0 tasi muvaffaqiyatli, 161
+    soniya kutish, 25 ta zaxira nusxa osilib qolgan.
+
+    Endi bu so'rov faqat bazaga yozadi (~0.2 soniya) va "qabul qilindi"
+    deb javob beradi. Rasmlarni guruhga fon worker'i (`_outbox_worker`)
+    Telegram cheklovini hurmat qilgan holda, xatolarda qayta urinib
+    yetkazadi. Xodim kutmaydi, xato ko'rmaydi; server qayta ishga tushsa
+    ham navbat bazada saqlanib qoladi. Yetkazish tugagach xodim botdan
+    "✅ Hisobotingiz guruhga muvaffaqiyatli yuborildi" xabarini oladi.
+    """
     lang = _norm_lang(lang)
     user = await _check_auth(init_data)
-
-    draft = await db.get_draft(user["id"])
-    if not draft or draft["filial_id"] != filial_id or draft["checklist_type_id"] != checklist_type_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Qoralama topilmadi yoki eskirgan. Sahifani yangilab, qaytadan urinib ko'ring.",
-        )
-
-    draft_photos = await db.list_draft_photos(user["id"])
-    if not draft_photos:
-        raise HTTPException(status_code=400, detail="Hech qanday rasm topilmadi")
+    _check_rate_limit(user["id"], limit=SUBMIT_RATE_LIMIT)
 
     filial = await db.get_filial(filial_id)
     if not filial:
         raise HTTPException(status_code=404, detail="Filial topilmadi")
 
-    # E'TIBOR: checklist_type['name'] shu yerda TANLANGAN TILDA (lang)
-    # olinadi — shunda Telegram topic'iga yuboriladigan xabar sarlavhasi
-    # ham foydalanuvchi ilovada tanlagan til bilan bir xil bo'ladi, front-
-    # enddan kelgan matnga ishonib o'tirilmaydi (xavfsizroq va izchil).
     checklist_type = await db.get_checklist_type(checklist_type_id, lang)
     if not checklist_type:
         raise HTTPException(status_code=404, detail="Chek-list turi topilmadi")
 
-    # Xavfsizlik: agar foydalanuvchida ESKIRGAN/keshlangan bo'limlar
-    # ro'yxati bo'lsa (masalan sahifani yangilamagan bo'lsa), shu filial
-    # uchun keyinchalik "yashirilgan" deb belgilangan bo'limga rasm
-    # yuborilmasin — bunday bo'lim topilsa so'rov butunlay rad etiladi.
-    checked_section_ids = {p["section_id"] for p in draft_photos}
-    for section_id in checked_section_ids:
-        if await db.is_section_hidden_for_filial(section_id, filial_id):
-            raise HTTPException(
-                status_code=400,
-                detail="Tanlangan bo'limlardan biri bu filial uchun endi mavjud emas. Sahifani yangilab, qayta urinib ko'ring.",
-            )
-
-    # Guruhda hali mavzu (topic) yo'q bo'lsa — avtomatik yaratamiz.
-    # E'TIBOR: agar guruhda bu filial nomi bilan topic ALLAQACHON mavjud
-    # bo'lsa (masalan admin qo'lda ochgan yoki bot_listener oldinroq
-    # bog'lab qo'ygan bo'lsa), bazada thread_id allaqachon to'ldirilgan
-    # bo'ladi va bu yerga umuman kirmaymiz — mavjud topicga yuboraveramiz.
-    thread_id = filial["thread_id"]
-    if not thread_id:
-        # So'rov kelguncha oralab, boshqa parallel submit yoki
-        # bot_listener allaqachon thread_id'ni bog'lagan bo'lishi mumkin —
-        # shuning uchun yana bir bor bazadan yangilab tekshiramiz.
-        fresh = await db.get_filial(filial_id)
-        thread_id = fresh["thread_id"] if fresh else None
-
-    if not thread_id:
-        try:
-            new_thread_id = await tg.create_forum_topic(filial["name"])
-        except Exception as e:  # noqa: BLE001
-            log.error("submit: topic yaratishda xato (filial=%s): %r", filial_id, e)
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    "Filial uchun Telegram mavzusini ochib bo'lmadi (aloqa "
-                    "muammosi). Internetni tekshirib, qayta 'Yuborish'ni bosing."
-                ),
-            ) from e
-        # Atomik "claim": faqat thread_id hali NULL bo'lsagina o'rnatiladi.
-        # Shu bilan bir vaqtda kelgan boshqa so'rov ikkinchi marta topic
-        # yaratib yubormaydi.
-        if await db.claim_filial_thread_id(filial_id, new_thread_id):
-            thread_id = new_thread_id
-        else:
-            # Boshqa parallel so'rov bizdan oldin thread_id'ni o'rnatib
-            # ulgurgan — o'sha mavjud thread_id'dan foydalanamiz.
-            fresh = await db.get_filial(filial_id)
-            thread_id = fresh["thread_id"]
-
-    full_name = " ".join(filter(None, [user.get("first_name"), user.get("last_name")])) or user.get("username") or "Noma'lum"
-
-    submission_id = await db.create_submission(
-        filial_id=filial_id,
-        filial_name=filial["name"],
-        telegram_user_id=user["id"],
-        full_name=full_name,
-        checklist_type_id=checklist_type_id,
-        checklist_type_name=checklist_type["name"],
-    )
-
+    # ------------------------------------------------------------------
+    # TUZATILDI: bitta xodim uchun bir vaqtda faqat BITTA yuborish.
+    # Ilgari hech qanday qulf yo'q edi: frontend timeout'dan keyin
+    # avtomatik qayta yuborardi va parallel so'rovlarning HAMMASI bir xil
+    # qoralamani o'qib, guruhga bir xil hisobotni bir necha marta
+    # yuborardi (o'lchov: 3 parallel so'rov = guruhda 3 ta nusxa).
+    #
+    # Butun kritik bo'lim BITTA ulanish va BITTA tranzaksiyada bajariladi,
+    # qoralama qatori esa `SELECT ... FOR UPDATE` bilan qulflanadi.
+    # Ikkinchi parallel so'rov birinchisi tugagunicha kutadi, so'ng
+    # qoralamani topa olmay 409 oladi. Bu advisory lock'dan afzal:
+    # tranzaksiya ichida qo'shimcha ulanish SO'RALMAYDI, shuning uchun
+    # pool (standart 10 ta ulanish) hech qachon o'zini-o'zi qulflab
+    # qo'ymaydi.
+    # ------------------------------------------------------------------
     now_str = datetime.now(TASHKENT_TZ).strftime("%d.%m.%Y %H:%M")
     checklist_emoji = CHECKLIST_TYPE_EMOJI.get(checklist_type["key"], "📋")
+    full_name = " ".join(filter(None, [user.get("first_name"), user.get("last_name")])) \
+        or user.get("username") or "Noma'lum"
 
-    # Rasmlarni bo'lim (section_id) bo'yicha guruhlaymiz — shu tufayli bitta
-    # bo'limga tegishli barcha rasmlar Telegramga BITTA albom (media group)
-    # sifatida yuboriladi, har biri alohida xabar bo'lib ketmaydi.
-    # dict Python 3.7+ da qo'shilish tartibini saqlaydi, shuning uchun
-    # bo'limlar frontendda ko'rsatilgan tartibda yuboriladi (draft_photos
-    # id bo'yicha, ya'ni olingan tartibda, saralangan).
-    section_groups: dict[int, list] = {}
-    for p in draft_photos:
-        section_groups.setdefault(p["section_id"], []).append(p)
-
-    # Bo'lim nomlarini FRONTENDDAN kelgan matnga ishonib emas, bazadan
-    # TANLANGAN TILDA (lang) qayta o'qib olamiz — shunda Telegram
-    # topic'iga yuboriladigan "📍 Bo'lim: ..." qatori ham har doim
-    # foydalanuvchi ilovada tanlagan til bilan bir xil bo'ladi.
-    section_names: dict[int, str] = {}
-    for section_id in section_groups:
-        sec = await db.get_section(section_id, lang)
-        section_names[section_id] = sec["name"] if sec else ""
-
-    for section_id, photos_meta in section_groups.items():
-        section_name = section_names.get(section_id, "")
-
-        # Bo'lim uchun izoh — barcha rasmlar bitta umumiy izohni ishlatadi
-        # (frontend shunday yuboradi), shuning uchun birinchisidan olamiz.
-        comment = (photos_meta[0].get("comment") or "").strip()
-
-        caption = (
-            f"🏢 <b>{_html_escape(filial['name'])}</b>\n"
-            f"{checklist_emoji} <b>{_html_escape(checklist_type['name'])}</b>\n"
-            f"🕒 {now_str}\n👤 {_html_escape(full_name)}"
-        )
-        if section_name:
-            caption += f"\n📍 Bo'lim: {_html_escape(section_name)}"
-        if comment:
-            caption += f"\n💬 {_html_escape(comment)}"
-
-        # Rasmlarni shu paytda (yuborish arafasida) bazadan o'qiymiz —
-        # ular allaqachon /api/draft/photo orqali Telegramga (xodimning
-        # shaxsiy chatiga) yuborilgan, shuning uchun odatda faqat
-        # `telegram_file_id` (kichkina matn) bo'ladi — QAYTA yuklash
-        # shart emas. Faqat migratsiyadan oldingi ESKI qatorlarda hali
-        # xom baytlar (`photo_data`) bo'lishi mumkin — ular uchun ham
-        # orqaga moslik saqlangan.
-        photo_payload = []
-        for p in photos_meta:
-            full_photo = await db.get_draft_photo(p["id"], user["id"])
-            if not full_photo:
-                continue
-            if full_photo.get("telegram_file_id"):
-                photo_payload.append({"file_id": full_photo["telegram_file_id"]})
-            elif full_photo.get("photo_data"):
-                photo_payload.append({"data": full_photo["photo_data"], "filename": full_photo["filename"] or "photo.jpg"})
-
-        if not photo_payload:
-            continue
-
-        # MUHIM TUZATISH: agar guruhdagi topic admin tomonidan qo'lda
-        # o'chirib yuborilgan bo'lsa (yoki boshqa sababdan Telegramda
-        # endi mavjud bo'lmasa), Telegram "message thread not found"
-        # xatosini qaytaradi va OLDIN bu SHU YERDA (yoki oldingi
-        # bo'limlarda) hisobotni BUTUNLAY to'xtatib qo'yardi — xodim
-        # nechta marta "Yuborish"ni bossa ham hech qachon guruhga
-        # yetib bormasdi, chunki bazadagi eskirgan thread_id hech qachon
-        # tuzatilmasdi. Endi shu xato ushlanadi: yangi topic yaratiladi,
-        # bazadagi thread_id yangilanadi va yuborish shu yangi topicga
-        # BIR MARTA qayta uriniladi.
-        try:
-            sent_list = await tg.send_media_group_to_topic(
-                thread_id=thread_id,
-                items=photo_payload,
-                caption=caption,
-            )
-        except TelegramTopicMissingError:
-            new_thread_id = await tg.create_forum_topic(filial["name"])
-            await db.set_filial_thread_id(filial_id, new_thread_id)
-            thread_id = new_thread_id
-            sent_list = await tg.send_media_group_to_topic(
-                thread_id=thread_id,
-                items=photo_payload,
-                caption=caption,
-            )
-        except Exception as e:  # noqa: BLE001
-            # Boshqa har qanday kutilmagan xato (tarmoq, Telegram
-            # tomonidagi muammo va h.k.) — foydalanuvchiga TUSHUNARLI
-            # xabar bilan qaytariladi (ilgari FastAPI buni umumiy "500
-            # Internal Server Error" qilib ko'rsatardi, xodim sababini
-            # bilolmasdi). Shu paytgacha muvaffaqiyatli yuborilgan
-            # bo'limlar qoralamadan allaqachon o'chirilgan bo'lgani
-            # uchun, xodim qayta "Yuborish"ni bossa faqat QOLGAN
-            # bo'limlar qayta uriniladi — hech narsa ikki marta
-            # yuborilmaydi.
-            log.error("submit: bo'lim %s yuborishda xato: %r", section_id, e)
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    "Guruhga yuborishda xatolik yuz berdi (Telegram bilan "
-                    "aloqa muammosi). Internetni tekshirib, qayta 'Yuborish'ni "
-                    "bosing — allaqachon yuborilgan rasmlar qayta yuborilmaydi."
-                ),
-            ) from e
-
-        for p, sent in zip(photos_meta, sent_list):
-            item_comment = (p.get("comment") or "").strip()
-            await db.add_submission_photo(
-                submission_id=submission_id,
-                section_id=section_id,
-                file_id=sent["file_id"],
-                comment=item_comment or None,
-                sent_message_id=sent["message_id"],
-            )
-
-        # Shu bo'lim MUVAFFAQIYATLI yuborilgach, uni qoralamadan darhol
-        # o'chiramiz. Shu tufayli agar keyingi bo'limni yuborishda xatolik
-        # yuz berib, xodim qayta "Yuborish"ni bosishga majbur bo'lsa —
-        # allaqachon yuborilgan bo'limlar QAYTA yuborilmaydi (dublikat
-        # bo'lmaydi), faqat qolganlari qayta urinilardi.
-        #
-        # MUHIM TUZATISH: xodimning shaxsiy chatidagi zaxira xabarini
-        # o'chirish endi javobni KUTIB TURMAYDI (fon vazifasi sifatida
-        # ishga tushiriladi). Bo'limlar ko'p bo'lgan hisobotlarda bu
-        # tozalash (har bir rasm uchun alohida Telegram so'rovi) javobni
-        # o'nlab soniyaga kechiktirib, "Yuborish" so'rovining o'zi
-        # tarmoq darajasida uzilib qolishiga (mobil qurilmalarda "Load
-        # failed" xatosi) sabab bo'lishi mumkin edi. Bu — shunchaki
-        # "iloji bo'lsa tozalash" (xatoligi allaqachon e'tiborga
-        # olinmaydi), shuning uchun uni orqa fonda, javobga to'sqinlik
-        # qilmasdan bajarish butunlay xavfsiz.
-        for p in photos_meta:
-            deleted = await db.delete_draft_photo(p["id"], user["id"])
-            if deleted and deleted.get("telegram_message_id"):
-                asyncio.create_task(
-                    tg.delete_message(deleted["telegram_user_id"], deleted["telegram_message_id"])
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            draft = await db.lock_draft_for_submit(conn, user["id"])
+            if not draft or draft["filial_id"] != filial_id \
+                    or draft["checklist_type_id"] != checklist_type_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Bu hisobot allaqachon yuborilgan yoki qoralama eskirgan. "
+                           "Sahifani yangilab, qaytadan urinib ko'ring.",
                 )
 
-    # Hammasi muvaffaqiyatli yuborilgach — qoralama endi kerak emas.
-    await db.clear_draft(user["id"])
+            draft_photos = await db.list_draft_photos_conn(conn, draft["id"])
+            if not draft_photos:
+                raise HTTPException(status_code=400, detail="Hech qanday rasm topilmadi")
 
-    return {"ok": True, "submission_id": submission_id}
+            # Rasmlarni bo'lim bo'yicha guruhlaymiz — har bir bo'lim guruhga
+            # bitta albom bo'lib tushadi (xabar ko'rinishi o'zgarmadi).
+            section_groups: dict[int, list] = {}
+            for p in draft_photos:
+                section_groups.setdefault(p["section_id"], []).append(p)
+
+            # Eskirgan/keshlangan sahifadan shu filial uchun yashirilgan
+            # bo'limga rasm yuborilmasin (bitta so'rovda — ilgari har bir
+            # bo'lim uchun alohida so'rov ketardi).
+            hidden = await db.hidden_section_ids_conn(conn, filial_id, list(section_groups))
+            if hidden:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Tanlangan bo'limlardan biri bu filial uchun endi mavjud emas. "
+                           "Sahifani yangilab, qayta urinib ko'ring.",
+                )
+
+            submission_id = await db.create_submission_conn(
+                conn,
+                filial_id=filial_id,
+                filial_name=filial["name"],
+                telegram_user_id=user["id"],
+                full_name=full_name,
+                checklist_type_id=checklist_type_id,
+                checklist_type_name=checklist_type["name"],
+            )
+
+            queued_sections = 0
+            for seq, (section_id, photos_meta) in enumerate(section_groups.items()):
+                sec = await db.get_section_conn(conn, section_id, lang)
+                section_name = sec["name"] if sec else ""
+                comment = (photos_meta[0].get("comment") or "").strip()
+
+                caption = (
+                    f"🏢 <b>{_html_escape(filial['name'])}</b>\n"
+                    f"{checklist_emoji} <b>{_html_escape(checklist_type['name'])}</b>\n"
+                    f"🕒 {now_str}\n👤 {_html_escape(full_name)}"
+                )
+                if section_name:
+                    caption += f"\n📍 Bo'lim: {_html_escape(section_name)}"
+                if comment:
+                    caption += f"\n💬 {_html_escape(comment)}"
+
+                photos_payload = [
+                    {
+                        "file_id": p["telegram_file_id"],
+                        "comment": (p.get("comment") or "").strip() or None,
+                        "backup_message_id": p.get("telegram_message_id"),
+                    }
+                    for p in photos_meta if p.get("telegram_file_id")
+                ]
+                if not photos_payload:
+                    continue
+
+                await db.enqueue_outbox(
+                    conn,
+                    submission_id=submission_id,
+                    telegram_user_id=user["id"],
+                    filial_id=filial_id,
+                    filial_name=filial["name"],
+                    section_id=section_id,
+                    seq=seq,
+                    caption=caption,
+                    photos=photos_payload,
+                )
+                queued_sections += 1
+
+            if not queued_sections:
+                raise HTTPException(status_code=400, detail="Hech qanday rasm topilmadi")
+
+            # Qoralama endi kerak emas — barcha ma'lumot navbatda saqlangan.
+            # Zaxira nusxa xabarlari navbat YETKAZGANDAN KEYIN o'chiriladi,
+            # shuning uchun bu yerda ularga tegmaymiz (yetkazish
+            # muvaffaqiyatsiz bo'lsa, zaxira nusxa xodimda qolib turadi).
+            await db.delete_draft_conn(conn, draft["id"])
+
+    log.info("submit: hisobot #%s navbatga qo'yildi (%d ta bo'lim, xodim %s)",
+             submission_id, queued_sections, user["id"])
+    return {"ok": True, "submission_id": submission_id, "queued": True}
 
 
 # ---------------------------------------------------------------------------
@@ -793,7 +992,30 @@ async def admin_update_user(
     full_name: Optional[str] = Form(None),
     is_superadmin: bool = Form(False),
 ):
-    await _check_superadmin(init_data)
+    requester = await _check_superadmin(init_data)
+
+    # TUZATILDI: superadmin o'zini huquqdan mahrum qilib, tizimga kira
+    # olmay qolardi. O'chirishda ("O'zingizni o'chira olmaysiz") himoya
+    # bor edi, tahrirlashda esa yo'q edi — admin panelda "Ism" va
+    # "Superadmin huquqi" bitta modalda bo'lgani uchun, ismni tuzatayotib
+    # checkbox'ni beixtiyor bosish yetarli edi. Tiklash faqat env
+    # o'zgaruvchisi + redeploy orqali mumkin edi.
+    users = await db.list_allowed_users()
+    target = next((u for u in users if u["id"] == user_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+    if target["telegram_user_id"] == requester["id"] and not is_superadmin:
+        raise HTTPException(
+            status_code=400,
+            detail="O'zingizni superadmin huquqidan mahrum qila olmaysiz.",
+        )
+    # Oxirgi superadmin qolmasin (aks holda admin panelga kirish yo'qoladi).
+    if target["is_superadmin"] and not is_superadmin and await db.count_superadmins() <= 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Bu yagona superadmin — huquqni olib tashlash mumkin emas.",
+        )
+
     user = await db.update_allowed_user(user_id, full_name, is_superadmin)
     if not user:
         raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
@@ -834,7 +1056,12 @@ async def admin_add_filial(
     name = name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Filial nomi bo'sh bo'lishi mumkin emas!")
-    filial = await db.create_filial(name)
+    # TUZATILDI: takroriy nom ilgari ushlanmagan UniqueViolationError
+    # ko'tarib, adminga "Kutilmagan xatolik yuz berdi" deb ko'rsatardi.
+    try:
+        filial = await db.create_filial(name)
+    except asyncpg.UniqueViolationError:
+        raise HTTPException(status_code=400, detail="Bunday nomli filial allaqachon mavjud.")
     return {"ok": True, "filial": filial}
 
 
@@ -849,7 +1076,10 @@ async def admin_update_filial(
     name = name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Filial nomi bo'sh bo'lishi mumkin emas!")
-    filial = await db.update_filial(filial_id, name, is_active)
+    try:
+        filial = await db.update_filial(filial_id, name, is_active)
+    except asyncpg.UniqueViolationError:
+        raise HTTPException(status_code=400, detail="Bunday nomli filial allaqachon mavjud.")
     if not filial:
         raise HTTPException(status_code=404, detail="Filial topilmadi")
     return {"ok": True, "filial": filial}
@@ -979,7 +1209,21 @@ async def admin_add_section(
     if not checklist_type:
         raise HTTPException(status_code=404, detail="Chek-list turi topilmadi")
 
+    # ------------------------------------------------------------------
+    # BLOKER himoyasi: ilgari bir xil nomli ikkita bo'lim bemalol
+    # qo'shilardi (HTTP 200), lekin KEYINGI restart/deployda schema.sql
+    # dagi UNIQUE indeks yaratilmay, ilova butunlay ishga tushmay
+    # qolardi ("Application startup failed. Exiting."). Sabab bilan
+    # oqibat orasida kunlar bo'lishi mumkin edi. Endi admin darhol
+    # tushunarli xato oladi.
+    # ------------------------------------------------------------------
     names = await translate_utils.translate_to_all_langs(name, lang)
+    legacy_name = names["uz"] or names["ru"] or names["en"]
+    if await db.section_name_exists(checklist_type_id, legacy_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Bu smenada shunday nomli bo'lim allaqachon mavjud. Boshqa nom kiriting.",
+        )
     section = await db.create_section(checklist_type_id, names["uz"], names["ru"], names["en"])
     return {"ok": True, "section": section}
 
@@ -1002,6 +1246,15 @@ async def admin_update_section(
         raise HTTPException(status_code=400, detail="Bo'lim nomini kiriting")
 
     names = await translate_utils.translate_to_all_langs(name, lang)
+    legacy_name = names["uz"] or names["ru"] or names["en"]
+    ct_id = await db.get_section_checklist_type(section_id)
+    if ct_id is None:
+        raise HTTPException(status_code=404, detail="Bo'lim topilmadi")
+    if await db.section_name_exists(ct_id, legacy_name, exclude_id=section_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Bu smenada shunday nomli bo'lim allaqachon mavjud. Boshqa nom kiriting.",
+        )
     section = await db.update_section(section_id, names["uz"], names["ru"], names["en"], is_active)
     if not section:
         raise HTTPException(status_code=404, detail="Bo'lim topilmadi")

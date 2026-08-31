@@ -720,6 +720,105 @@ async def get_stale_draft_photo_messages(max_age_minutes: int = 15) -> list[dict
     return [dict(r) for r in rows]
 
 
+async def stale_drafts_to_deletion_queue(max_age_minutes: int) -> int:
+    """Eskirgan qoralamalarning zaxira nusxa xabarlarini O'CHIRISH NAVBATIGA
+    ko'chiradi va qoralamalarni o'chiradi — ikkalasi ham BITTA tranzaksiyada.
+
+    TUZATILDI: ilgari bu ikki qadam alohida edi — avval xabarlar ro'yxati
+    olinardi, keyin qoralamalar bazadan o'chirilardi, so'ng xabarlar
+    ketma-ket Telegramdan o'chirilardi. Agar shu oxirgi bosqichda xato
+    bo'lsa (masalan flood-control), bazadagi yozuv allaqachon yo'q edi —
+    ya'ni qaysi xabarni o'chirish kerakligi haqidagi ma'lumot butunlay
+    yo'qolardi va zaxira nusxa xodimning chatida abadiy qolardi.
+    Endi xabarlar avval doimiy navbatga yoziladi, shuning uchun hech
+    qanday holatda yo'qolmaydi."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                INSERT INTO pending_deletions (chat_id, message_id)
+                SELECT d.telegram_user_id, dp.telegram_message_id
+                FROM draft_photos dp
+                JOIN drafts d ON d.id = dp.draft_id
+                WHERE d.updated_at < now() - ($1 || ' minutes')::interval
+                  AND dp.telegram_message_id IS NOT NULL
+                ON CONFLICT (chat_id, message_id) DO NOTHING
+                """,
+                str(max_age_minutes),
+            )
+            rows = await conn.fetch(
+                "DELETE FROM drafts WHERE updated_at < now() - ($1 || ' minutes')::interval RETURNING id",
+                str(max_age_minutes),
+            )
+    return len(rows)
+
+
+# ---------- Zaxira nusxalarni o'chirish navbati ----------
+
+async def enqueue_deletion(chat_id: int, message_id: int) -> None:
+    """Zaxira nusxa xabarini o'chirish navbatiga qo'yadi. Worker uni
+    bajarilgunicha qayta uradi — shuning uchun 429/tarmoq xatosi tufayli
+    hech qachon yo'qolmaydi."""
+    if not chat_id or not message_id:
+        return
+    pool = await get_pool()
+    await pool.execute(
+        "INSERT INTO pending_deletions (chat_id, message_id) VALUES ($1, $2) "
+        "ON CONFLICT (chat_id, message_id) DO NOTHING",
+        chat_id, message_id,
+    )
+
+
+async def enqueue_deletions(items: list[tuple]) -> None:
+    if not items:
+        return
+    pool = await get_pool()
+    await pool.executemany(
+        "INSERT INTO pending_deletions (chat_id, message_id) VALUES ($1, $2) "
+        "ON CONFLICT (chat_id, message_id) DO NOTHING",
+        [(c, m) for c, m in items if c and m],
+    )
+
+
+async def take_due_deletions(limit: int = 20) -> list[dict]:
+    """Vaqti kelgan o'chirishlarni oladi va darhol keyingi urinish vaqtini
+    surib qo'yadi — shu bilan bir necha worker bir xil yozuvni olmaydi."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """
+        UPDATE pending_deletions SET
+            attempts = attempts + 1,
+            next_attempt_at = now() + (least(300, 15 * power(2, least(attempts, 5)))::int || ' seconds')::interval
+        WHERE id IN (
+            SELECT id FROM pending_deletions
+            WHERE next_attempt_at <= now()
+            ORDER BY next_attempt_at, id
+            LIMIT $1
+            FOR UPDATE SKIP LOCKED
+        )
+        RETURNING id, chat_id, message_id, attempts
+        """,
+        limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def finish_deletion(deletion_id: int) -> None:
+    pool = await get_pool()
+    await pool.execute("DELETE FROM pending_deletions WHERE id = $1", deletion_id)
+
+
+async def drop_exhausted_deletions(max_attempts: int = 8) -> int:
+    """Juda ko'p urinishdan keyin ham o'chirilmagan yozuvlarni tashlaymiz
+    (masalan xodim botni bloklab qo'ygan) — navbat cheksiz o'smasin."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "DELETE FROM pending_deletions WHERE attempts >= $1 RETURNING id", max_attempts
+    )
+    return len(rows)
+
+
 async def cleanup_stale_drafts(max_age_minutes: int = 15) -> int:
     """XODIM TASHLAB QO'YGAN (uzoq vaqt davomida hech narsa qo'shmagan/
     yangilamagan) qoralamalarni avtomatik o'chiradi — CASCADE orqali
@@ -736,3 +835,280 @@ async def cleanup_stale_drafts(max_age_minutes: int = 15) -> int:
         str(max_age_minutes),
     )
     return len(rows)
+
+
+# ============================================================
+#  YETKAZISH NAVBATI (outbox)
+#
+#  "Yuborish" bosilganda hisobot Telegramga DARHOL emas, shu navbatga
+#  yoziladi. Fon worker'i uni Telegram cheklovini hurmat qilgan holda
+#  bo'shatadi. Shu tufayli:
+#    - xodim kutmaydi (javob ~0.2 soniyada keladi);
+#    - band paytda ham hech qanday xato ko'rmaydi;
+#    - server qayta ishga tushsa ham navbat bazada saqlanib qoladi.
+# ============================================================
+
+async def enqueue_outbox(conn, submission_id: int, telegram_user_id: int, filial_id: Optional[int],
+                          filial_name: str, section_id: int, seq: int, caption: str,
+                          photos: list[dict]) -> None:
+    import json as _json
+    await conn.execute(
+        """
+        INSERT INTO outbox (submission_id, telegram_user_id, filial_id, filial_name,
+                            section_id, seq, caption, photos)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+        """,
+        submission_id, telegram_user_id, filial_id, filial_name,
+        section_id, seq, caption, _json.dumps(photos),
+    )
+
+
+async def take_next_outbox() -> Optional[dict]:
+    """Navbatdagi keyingi yozuvni oladi (eng eski birinchi) va uni
+    boshqa worker olib qo'ymasligi uchun darhol band qiladi.
+    FOR UPDATE SKIP LOCKED — bir nechta replika bo'lsa ham xavfsiz."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        UPDATE outbox SET attempts = attempts + 1
+        WHERE id = (
+            SELECT id FROM outbox
+            WHERE status = 'pending' AND next_attempt_at <= now()
+            ORDER BY next_attempt_at, id
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        )
+        RETURNING id, submission_id, telegram_user_id, filial_id, filial_name,
+                  section_id, seq, caption, photos, attempts
+        """,
+    )
+    return dict(row) if row else None
+
+
+async def mark_outbox_sent(outbox_id: int) -> None:
+    pool = await get_pool()
+    await pool.execute(
+        "UPDATE outbox SET status = 'sent', sent_at = now(), last_error = NULL WHERE id = $1",
+        outbox_id,
+    )
+
+
+async def reschedule_outbox(outbox_id: int, delay_seconds: float, error: str) -> None:
+    """Vaqtinchalik xato — keyinroq qayta uriniladi (hisobot yo'qolmaydi)."""
+    pool = await get_pool()
+    await pool.execute(
+        "UPDATE outbox SET next_attempt_at = now() + ($2 || ' seconds')::interval, "
+        "last_error = $3 WHERE id = $1",
+        outbox_id, str(int(max(1, delay_seconds))), (error or "")[:500],
+    )
+
+
+async def mark_outbox_failed(outbox_id: int, error: str) -> None:
+    pool = await get_pool()
+    await pool.execute(
+        "UPDATE outbox SET status = 'failed', last_error = $2 WHERE id = $1",
+        outbox_id, (error or "")[:500],
+    )
+
+
+async def submission_delivery_state(submission_id: int) -> dict:
+    """Hisobotning barcha bo'limlari yetkazildimi — shuni aniqlaydi."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT count(*) FILTER (WHERE status = 'pending') AS pending,
+               count(*) FILTER (WHERE status = 'failed')  AS failed,
+               count(*) FILTER (WHERE status = 'sent')    AS sent,
+               count(*) AS total
+        FROM outbox WHERE submission_id = $1
+        """,
+        submission_id,
+    )
+    return dict(row) if row else {"pending": 0, "failed": 0, "sent": 0, "total": 0}
+
+
+async def set_submission_delivery(submission_id: int, status: str) -> bool:
+    """Holatni belgilaydi. True qaytsa — shu chaqiruv birinchi bo'lib
+    o'zgartirdi (xodimga xabar faqat bir marta yuborilishi uchun)."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "UPDATE submissions SET delivery_status = $2, notified_at = now() "
+        "WHERE id = $1 AND delivery_status <> $2 RETURNING id",
+        submission_id, status,
+    )
+    return row is not None
+
+
+async def outbox_stats() -> dict:
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT count(*) FILTER (WHERE status='pending') pending, "
+        "       count(*) FILTER (WHERE status='failed') failed, "
+        "       (SELECT count(*) FROM pending_deletions) deletions FROM outbox"
+    )
+    return dict(row)
+
+
+async def purge_old_outbox(days: int = 7) -> int:
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "DELETE FROM outbox WHERE status = 'sent' AND sent_at < now() - ($1 || ' days')::interval "
+        "RETURNING id", str(days),
+    )
+    return len(rows)
+
+
+# ============================================================
+#  VALIDATSIYA VA POYGA HIMOYASI
+# ============================================================
+
+async def section_belongs_to(section_id: int, checklist_type_id: Optional[int]) -> bool:
+    """Bo'lim mavjudmi va (berilgan bo'lsa) shu smena turiga tegishlimi.
+
+    Ilgari bu tekshiruv umuman yo'q edi: istalgan son `section_id`
+    sifatida qabul qilinardi. Mavjud bo'lmagan ID "zaharlangan qoralama"
+    hosil qilardi, boshqa smenaning ID'si esa hisobotda noto'g'ri bo'lim
+    nomi chiqishiga olib kelardi."""
+    pool = await get_pool()
+    if checklist_type_id is None:
+        row = await pool.fetchrow(
+            "SELECT 1 FROM sections WHERE id = $1 AND is_active = TRUE", section_id)
+    else:
+        row = await pool.fetchrow(
+            "SELECT 1 FROM sections WHERE id = $1 AND checklist_type_id = $2 AND is_active = TRUE",
+            section_id, checklist_type_id)
+    return row is not None
+
+
+async def section_name_exists(checklist_type_id: int, name: str,
+                               exclude_id: Optional[int] = None) -> bool:
+    """Shu smena turida bir xil nomli bo'lim bormi.
+
+    BLOKER himoyasi: ilgari takroriy nom bemalol qo'shilardi va KEYINGI
+    restartda ilova butunlay ishga tushmay qolardi. Endi admin darhol
+    tushunarli xato oladi."""
+    pool = await get_pool()
+    if exclude_id is None:
+        row = await pool.fetchrow(
+            "SELECT 1 FROM sections WHERE checklist_type_id = $1 "
+            "AND lower(trim(name)) = lower(trim($2))",
+            checklist_type_id, name)
+    else:
+        row = await pool.fetchrow(
+            "SELECT 1 FROM sections WHERE checklist_type_id = $1 "
+            "AND lower(trim(name)) = lower(trim($2)) AND id <> $3",
+            checklist_type_id, name, exclude_id)
+    return row is not None
+
+
+async def get_section_checklist_type(section_id: int) -> Optional[int]:
+    pool = await get_pool()
+    row = await pool.fetchrow("SELECT checklist_type_id FROM sections WHERE id = $1", section_id)
+    return row["checklist_type_id"] if row else None
+
+
+async def count_superadmins() -> int:
+    pool = await get_pool()
+    row = await pool.fetchrow("SELECT count(*) c FROM allowed_users WHERE is_superadmin = TRUE")
+    return row["c"]
+
+
+# ESLATMA: bu yerda ilgari `advisory_lock` kontekst-menejeri bor edi.
+# U pool'dan ulanish olib, tranzaksiyani ochiq holda ushlab turardi —
+# ichkarida esa yana pool'dan ulanish so'ralardi. 10 ta parallel yuborishda
+# bu butun pool'ni qulflab, ilovani qotirib qo'yardi (o'lchov: 10 xodimdan
+# 8 tasi ReadTimeout). Uning o'rniga `lock_draft_for_submit` /
+# `claim_thread_slot` ishlatiladi — ular BITTA ulanishda `SELECT ... FOR
+# UPDATE` bilan ishlaydi va qo'shimcha ulanish talab qilmaydi.
+
+
+# ============================================================
+#  BITTA ULANISHDA ISHLAYDIGAN VARIANTLAR (submit uchun)
+#
+#  MUHIM: `submit` butun kritik bo'limni BITTA ulanish va BITTA
+#  tranzaksiyada bajaradi. Sabab — pool tugab qolishining oldini olish:
+#  agar tranzaksiya ochiq turganda ichkarida pool'dan YANA ulanish
+#  so'ralsa, 10 ta parallel yuborishda 10 ta ulanish qulfda ushlanib,
+#  hech biri ikkinchisini ololmay, butun ilova qotib qoladi (deadlock).
+#  Shuning uchun quyidagi funksiyalar tayyor `conn` ni qabul qiladi.
+# ============================================================
+
+async def lock_draft_for_submit(conn, telegram_user_id: int) -> Optional[dict]:
+    """Qoralama qatorini SELECT ... FOR UPDATE bilan qulflaydi.
+
+    Shu bilan bir vaqtda kelgan ikkinchi "Yuborish" so'rovi birinchisi
+    tugagunicha kutadi va keyin qoralamani topa olmaydi (chunki u
+    o'chirilgan bo'ladi) — natijada guruhga dublikat hisobot tushmaydi.
+    Bu advisory lock'dan afzal: qo'shimcha ulanish talab qilmaydi va
+    bir nechta replikada ham to'g'ri ishlaydi."""
+    row = await conn.fetchrow(
+        "SELECT id, telegram_user_id, filial_id, checklist_type_id, lang "
+        "FROM drafts WHERE telegram_user_id = $1 FOR UPDATE",
+        telegram_user_id,
+    )
+    return dict(row) if row else None
+
+
+async def list_draft_photos_conn(conn, draft_id: int) -> list[dict]:
+    rows = await conn.fetch(
+        "SELECT id, section_id, comment, filename, telegram_file_id, telegram_message_id "
+        "FROM draft_photos WHERE draft_id = $1 ORDER BY id",
+        draft_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def get_section_conn(conn, section_id: int, lang: str = "uz") -> Optional[dict]:
+    row = await conn.fetchrow(
+        "SELECT id, name_uz, name_ru, name_en FROM sections WHERE id = $1", section_id)
+    if not row:
+        return None
+    d = dict(row)
+    d["name"] = _localized_name(d, lang)
+    return d
+
+
+async def hidden_section_ids_conn(conn, filial_id: int, section_ids: list[int]) -> set:
+    """Bitta so'rovda — ilgari har bir bo'lim uchun alohida so'rov ketardi (N+1)."""
+    if not section_ids:
+        return set()
+    rows = await conn.fetch(
+        "SELECT section_id FROM filial_section_hidden "
+        "WHERE filial_id = $1 AND section_id = ANY($2::int[])",
+        filial_id, section_ids,
+    )
+    return {r["section_id"] for r in rows}
+
+
+async def create_submission_conn(conn, filial_id: int, filial_name: str, telegram_user_id: int,
+                                  full_name: str, checklist_type_id, checklist_type_name) -> int:
+    row = await conn.fetchrow(
+        """
+        INSERT INTO submissions (filial_id, filial_name_snapshot, telegram_user_id, full_name,
+                                 checklist_type_id, checklist_type_name_snapshot)
+        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+        """,
+        filial_id, filial_name, telegram_user_id, full_name, checklist_type_id, checklist_type_name,
+    )
+    return row["id"]
+
+
+async def delete_draft_conn(conn, draft_id: int) -> None:
+    await conn.execute("DELETE FROM drafts WHERE id = $1", draft_id)
+
+
+async def get_filial_conn(conn, filial_id: int) -> Optional[dict]:
+    row = await conn.fetchrow("SELECT id, name, thread_id FROM filials WHERE id = $1", filial_id)
+    return dict(row) if row else None
+
+
+async def claim_thread_slot(conn, filial_id: int) -> Optional[dict]:
+    """Filial qatorini qulflab, joriy thread_id ni qaytaradi — topic
+    yaratish poygasini to'xtatish uchun (bitta ulanishda)."""
+    row = await conn.fetchrow(
+        "SELECT id, name, thread_id FROM filials WHERE id = $1 FOR UPDATE", filial_id)
+    return dict(row) if row else None
+
+
+async def set_thread_id_conn(conn, filial_id: int, thread_id: int) -> None:
+    await conn.execute("UPDATE filials SET thread_id = $1 WHERE id = $2", thread_id, filial_id)

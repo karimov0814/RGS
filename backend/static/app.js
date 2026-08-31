@@ -31,7 +31,17 @@ const initData = tg.initData; // backendga validatsiya uchun yuboriladi
 // holatda qolib ketardi va hech qanday xato ko'rsatilmasdi. Endi har bir
 // urinish uchun aniq vaqt chegarasi (`timeoutMs`) qo'yiladi — shu vaqtda
 // javob kelmasa, so'rov bekor qilinib (AbortController), qayta uriniladi.
-async function fetchWithRetry(url, options = {}, retries = 2, backoffMs = 900, timeoutMs = 25000) {
+// MUHIM TUZATISH — takroriy hisobotlar sababi shu funksiyada edi.
+// Ilgari HAR QANDAY so'rov 5xx javobda VA timeout'da avtomatik qayta
+// yuborilardi. Rasm yuklash va "Yuborish" — bu POST so'rovlar, ya'ni
+// ular serverda O'ZGARISH qiladi. Sekin internetda server so'rovni
+// bajarib bo'lgan, javob esa yetib bormagan holatda qayta yuborish
+// guruhga bir xil hisobotning 2-4 nusxasi tushishiga olib kelardi.
+// Endi `retryOnServerError` standart holatda O'CHIQ — POST so'rovlar
+// faqat ULANISH umuman o'rnatilmagan holatda qayta uriniladi (bu
+// xavfsiz, chunki server so'rovni ko'rmagan).
+async function fetchWithRetry(url, options = {}, retries = 2, backoffMs = 900,
+                              timeoutMs = 25000, retryOnServerError = false) {
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     const controller = new AbortController();
@@ -39,8 +49,7 @@ async function fetchWithRetry(url, options = {}, retries = 2, backoffMs = 900, t
     try {
       const res = await fetch(url, { ...options, signal: controller.signal });
       clearTimeout(timer);
-      // 5xx — server tomonidagi vaqtinchalik muammo bo'lishi mumkin, qayta urinamiz.
-      if (res.status >= 500 && attempt < retries) {
+      if (retryOnServerError && res.status >= 500 && attempt < retries) {
         lastErr = new Error(`HTTP ${res.status}`);
         await new Promise((r) => setTimeout(r, backoffMs * (attempt + 1)));
         continue;
@@ -48,7 +57,7 @@ async function fetchWithRetry(url, options = {}, retries = 2, backoffMs = 900, t
       return res;
     } catch (err) {
       clearTimeout(timer);
-      // Tarmoq xatosi yoki timeout (uzilib/osilib qolgan ulanish) — qayta urinamiz.
+      // Tarmoq xatosi yoki timeout (uzilib/osilib qolgan ulanish).
       lastErr = err && err.name === "AbortError"
         ? new Error("So'rov javob bermadi (internet aloqasi sekin yoki uzilgan)")
         : err;
@@ -59,6 +68,20 @@ async function fetchWithRetry(url, options = {}, retries = 2, backoffMs = 900, t
     }
   }
   throw lastErr;
+}
+
+// HTML'ga qo'yiladigan har qanday matnni xavfsizlantiradi.
+// Ilgari filial/bo'lim nomlari va xodim izohlari to'g'ridan-to'g'ri
+// `innerHTML` ga qo'yilardi — nomida <img src=x onerror=...> bo'lgan
+// filial har bir xodimning ilovasida skript ishga tushirardi va
+// initData'ni (to'liq huquqli kredensial) o'g'irlashi mumkin edi.
+function esc(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 // ============================================================
@@ -74,6 +97,7 @@ const ICONS = {
   chevron: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>`,
   check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4.5 4.5L19 8"/></svg>`,
   close: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
+  info: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5"/><path d="M12 7.6h.01"/></svg>`,
   camera: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8.2c0-.66.54-1.2 1.2-1.2h2.1l1-1.6c.2-.32.55-.5.92-.5h5.56c.37 0 .72.18.92.5l1 1.6h2.1c.66 0 1.2.54 1.2 1.2v10.6c0 .66-.54 1.2-1.2 1.2H5.2c-.66 0-1.2-.54-1.2-1.2Z"/><circle cx="12" cy="13" r="3.4"/></svg>`,
   settings: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2.8"/><path d="M19.4 13.5a1.8 1.8 0 0 0 .36 1.98l.06.06a2.16 2.16 0 1 1-3.06 3.06l-.06-.06a1.8 1.8 0 0 0-1.98-.36 1.8 1.8 0 0 0-1.1 1.65V20a2.16 2.16 0 1 1-4.32 0v-.1a1.8 1.8 0 0 0-1.18-1.65 1.8 1.8 0 0 0-1.98.36l-.06.06a2.16 2.16 0 1 1-3.06-3.06l.06-.06a1.8 1.8 0 0 0 .36-1.98 1.8 1.8 0 0 0-1.65-1.1H2a2.16 2.16 0 1 1 0-4.32h.1a1.8 1.8 0 0 0 1.65-1.18 1.8 1.8 0 0 0-.36-1.98l-.06-.06A2.16 2.16 0 1 1 6.4 3.15l.06.06a1.8 1.8 0 0 0 1.98.36h.09A1.8 1.8 0 0 0 9.63 1.9V1.8a2.16 2.16 0 1 1 4.32 0v.1a1.8 1.8 0 0 0 1.1 1.65 1.8 1.8 0 0 0 1.98-.36l.06-.06a2.16 2.16 0 1 1 3.06 3.06l-.06.06a1.8 1.8 0 0 0-.36 1.98v.09c.28.72.94 1.22 1.72 1.24h.1a2.16 2.16 0 1 1 0 4.32h-.1a1.8 1.8 0 0 0-1.65 1.1Z"/></svg>`,
   block: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8.5"/><path d="M6.2 6.2l11.6 11.6" stroke-linecap="round"/></svg>`,
@@ -206,7 +230,7 @@ async function restoreDraftIfAny() {
 
     const secRes = await fetchWithRetry(
       `${API_BASE}/api/sections?init_data=${encodeURIComponent(initData)}&checklist_type_id=${draft.checklist_type_id}&filial_id=${filial.id}&lang=${getLang()}`
-    );
+    , {}, 2, 900, 20000, true);
     if (!secRes.ok) {
       hideLoading();
       return false;
@@ -292,12 +316,12 @@ function openModal({ title, message = "", fields = [], confirmText, cancelText, 
           return `
             <label class="admin-checkbox">
               <input type="checkbox" id="modal-field-${f.id}" ${f.checked ? "checked" : ""} />
-              ${f.label}
+              ${esc(f.label)}
             </label>`;
         }
         return `
           <div>
-            <label class="modal-field-label" for="modal-field-${f.id}">${f.label}</label>
+            <label class="modal-field-label" for="modal-field-${f.id}">${esc(f.label)}</label>
             <input type="text" id="modal-field-${f.id}" class="admin-input" placeholder="${f.placeholder || ""}" value="${f.value ? String(f.value).replace(/"/g, "&quot;") : ""}" />
           </div>`;
       })
@@ -361,7 +385,7 @@ function renderFilialList(filials) {
   filials.forEach((f) => {
     const el = document.createElement("div");
     el.className = "filial-item";
-    el.innerHTML = `<span>${f.name}</span><span class="arrow">${iconMarkup("chevron")}</span>`;
+    el.innerHTML = `<span>${esc(f.name)}</span><span class="arrow">${iconMarkup("chevron")}</span>`;
     el.addEventListener("click", () => selectFilial(f));
     list.appendChild(el);
   });
@@ -373,7 +397,7 @@ function renderFilialList(filials) {
 // yerda bazadan QAYTA so'raladi.
 async function refreshFilialList() {
   try {
-    const res = await fetch(`${API_BASE}/api/config?init_data=${encodeURIComponent(initData)}&lang=${getLang()}`);
+    const res = await fetchWithRetry(`${API_BASE}/api/config?init_data=${encodeURIComponent(initData)}&lang=${getLang()}`, {}, 2, 900, 20000, true);
     if (!res.ok) return;
     const data = await res.json();
     state.checklistTypes = data.checklist_types;
@@ -387,7 +411,7 @@ async function refreshFilialList() {
 async function loadFilials() {
   showLoading(t("loading_default"));
   try {
-    const res = await fetch(`${API_BASE}/api/config?init_data=${encodeURIComponent(initData)}&lang=${getLang()}`);
+    const res = await fetchWithRetry(`${API_BASE}/api/config?init_data=${encodeURIComponent(initData)}&lang=${getLang()}`, {}, 2, 900, 20000, true);
 
     if (res.status === 401 || res.status === 403) {
       // Ruxsat etilmagan (whitelist'da yo'q) yoki initData yaroqsiz foydalanuvchi
@@ -449,7 +473,7 @@ function renderChecklistTypes() {
   state.checklistTypes.forEach((ct) => {
     const el = document.createElement("div");
     el.className = "filial-item";
-    el.innerHTML = `<span>${CHECKLIST_TYPE_EMOJI[ct.key] || "📋"} ${ct.name}</span><span class="arrow">${iconMarkup("chevron")}</span>`;
+    el.innerHTML = `<span>${CHECKLIST_TYPE_EMOJI[ct.key] || "📋"} ${esc(ct.name)}</span><span class="arrow">${iconMarkup("chevron")}</span>`;
     el.addEventListener("click", () => selectChecklistType(ct));
     list.appendChild(el);
   });
@@ -482,7 +506,7 @@ document.getElementById("btn-back-to-checklist").addEventListener("click", () =>
 // kerak).
 async function refetchChecklistTypes() {
   try {
-    const res = await fetch(`${API_BASE}/api/config?init_data=${encodeURIComponent(initData)}&lang=${getLang()}`);
+    const res = await fetchWithRetry(`${API_BASE}/api/config?init_data=${encodeURIComponent(initData)}&lang=${getLang()}`, {}, 2, 900, 20000, true);
     if (!res.ok) return;
     const data = await res.json();
     state.checklistTypes = data.checklist_types;
@@ -492,9 +516,9 @@ async function refetchChecklistTypes() {
 async function refetchSections() {
   if (!state.checklistType) return;
   try {
-    const res = await fetch(
+    const res = await fetchWithRetry(
       `${API_BASE}/api/sections?init_data=${encodeURIComponent(initData)}&checklist_type_id=${state.checklistType.id}&filial_id=${state.filial.id}&lang=${getLang()}`
-    );
+    , {}, 2, 900, 20000, true);
     if (!res.ok) return;
     const data = await res.json();
     // section.id lar o'zgarmaydi, faqat "name" yangi tilga almashadi —
@@ -513,7 +537,7 @@ async function selectChecklistType(checklistType) {
     // bo'lsa, xodimni ogohlantirmasdan turib eskisini o'chirib
     // yubormaymiz (chunki bu "yubormasdan botdan chiqib ketgan" holatdan
     // farqli — bu yerda xodim ONGLI ravishda boshqasini tanlamoqda).
-    const draftRes = await fetch(`${API_BASE}/api/draft?init_data=${encodeURIComponent(initData)}&lang=${getLang()}`);
+    const draftRes = await fetchWithRetry(`${API_BASE}/api/draft?init_data=${encodeURIComponent(initData)}&lang=${getLang()}`, {}, 2, 900, 20000, true);
     const draftData = draftRes.ok ? await draftRes.json() : { draft: null, photos: [] };
     const existingDraft = draftData.draft;
     const isSameSelection =
@@ -530,9 +554,9 @@ async function selectChecklistType(checklistType) {
       showLoading(t("loading_default"));
     }
 
-    const res = await fetch(
+    const res = await fetchWithRetry(
       `${API_BASE}/api/sections?init_data=${encodeURIComponent(initData)}&checklist_type_id=${checklistType.id}&filial_id=${state.filial.id}&lang=${getLang()}`
-    );
+    , {}, 2, 900, 20000, true);
     if (!res.ok) throw new Error(await res.text());
     const data = await res.json();
 
@@ -807,56 +831,198 @@ document.addEventListener("visibilitychange", () => {
 //  rasm yuborish chegarasidan (10 MB) oshib ketishi, yoki sekin mobil
 //  internetda so'rovni "uzilib qolishga" yaqinlashtirishi mumkin edi.
 // ============================================================
-const MAX_UPLOAD_BYTES = 1 * 1024 * 1024; // 1 MB
+// ============================================================
+//  RASMNI TAYYORLASH — iPhone va Android uchun BIR XIL natija.
+//
+//  MUAMMO EDI ("iPhone va Androidda bir xil rejimda va tezlikda
+//  ishlamayapti"):
+//    1. iOS tizim kamerasi 12 MP / 3-5 MB rasm qaytaradi; Androidda esa
+//       kadr getUserMedia'dan olinadi va odatda 1 MB'dan kichik bo'ladi.
+//       Eski kod "1 MB'dan kichik bo'lsa TEGMAYMIZ" qoidasi bilan
+//       ishlagani uchun Android rasmlari umuman siqilmasdi, iPhone
+//       rasmlari esa har safar to'liq siqish siklidan o'tardi —
+//       natijada ikki telefonda ham hajm, ham tezlik butunlay boshqacha
+//       edi.
+//    2. Siqish sikli eng yomon holatda ~25 marta JPEG kodlash qilardi va
+//       hammasi asosiy oqimda (main thread) bajarilardi — iPhone'da
+//       interfeys bir necha soniyaga qotib qolardi.
+//    3. HEIC (iPhone'ning standart formati) `createImageBitmap` da
+//       yiqilardi va `catch` bloki ASL faylni o'zgarishsiz yuborardi —
+//       Telegram esa uni rad etardi.
+//    4. `bitmap.close()` chaqirilmasdi, EXIF orientatsiyasi hisobga
+//       olinmasdi (portret rasmlar yonboshlab ketardi).
+//
+//  YECHIM: har ikkala platformada bir xil quvur (pipeline):
+//    - har doim qayta kodlanadi (hajmidan qat'i nazar) → bir xil natija;
+//    - maksimal tomon 1920px, maqsad hajm 900 KB;
+//    - sifat BINARY SEARCH bilan topiladi (~6 kodlash, 25 emas);
+//    - iloji bo'lsa Web Worker + OffscreenCanvas'da → interfeys qotmaydi;
+//    - HEIC/dekodlanmaydigan format uchun <img> orqali zaxira yo'l;
+//    - hech qanday yo'l ishlamasa va fayl chegaradan katta bo'lsa —
+//      TUSHUNARLI XATO ko'rsatiladi (jimgina asl faylni yubormaydi).
+// ============================================================
+const TARGET_BYTES = 900 * 1024;        // maqsad: ~900 KB
+const HARD_MAX_BYTES = 10 * 1024 * 1024; // server ham shu chegarani qo'llaydi
+const MAX_DIMENSION = 1920;
 
-async function compressImageForUpload(file, maxDimension = 2000) {
-  if (!file || !file.type || !file.type.startsWith("image/")) return file;
-  // Allaqachon 1 MB'dan kichik — tegmaymiz, asl fayl o'zgarishsiz yuboriladi.
-  if (file.size <= MAX_UPLOAD_BYTES) return file;
-
+// Worker kodi — alohida fayl sifatida joylashtirishning hojati yo'q,
+// Blob URL orqali shu yerdan yaratiladi (bitta fayl bilan deploy).
+const WORKER_SOURCE = `
+self.onmessage = async (e) => {
+  const { blob, maxDim, target, id } = e.data;
   try {
-    const bitmap = await createImageBitmap(file);
-
-    // Sifat (0.85 dan pastga) va, agar sifatning o'zi yetmasa, o'lcham
-    // (tomonlarni qisqartirib) bosqichma-bosqich pasaytiriladi — natija
-    // 1 MB'ga tushguncha yoki chegaralarga yetguncha davom etadi.
-    const qualitySteps = [0.85, 0.7, 0.55, 0.4, 0.3];
-    let dimension = Math.min(maxDimension, Math.max(bitmap.width, bitmap.height));
-    const minDimension = 640; // undan pastga tushirib sifatni juda ham buzmaymiz
-
-    let bestBlob = null;
-    while (true) {
-      const scale = Math.min(1, dimension / Math.max(bitmap.width, bitmap.height));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-
-      for (const quality of qualitySteps) {
-        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
-        if (!blob) continue;
-        if (!bestBlob || blob.size < bestBlob.size) bestBlob = blob;
-        if (blob.size <= MAX_UPLOAD_BYTES) {
-          return new File([blob], (file.name || "photo").replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" });
-        }
-      }
-
-      // Eng past sifatda ham 1 MB'dan katta bo'lsa — o'lchamni yana kichraytirib qayta urinamiz.
-      if (dimension <= minDimension) break;
-      dimension = Math.round(dimension * 0.75);
+    const bmp = await createImageBitmap(blob, { imageOrientation: "from-image" });
+    const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
+    const w = Math.max(1, Math.round(bmp.width * scale));
+    const h = Math.max(1, Math.round(bmp.height * scale));
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bmp, 0, 0, w, h);
+    bmp.close();
+    // Sifatni binary search bilan topamiz — ~6 ta kodlash yetarli.
+    let lo = 0.35, hi = 0.92, best = null;
+    for (let i = 0; i < 6; i++) {
+      const q = (lo + hi) / 2;
+      const out = await canvas.convertToBlob({ type: "image/jpeg", quality: q });
+      if (out.size <= target) { best = out; lo = q; } else { hi = q; }
+      if (hi - lo < 0.04) break;
     }
-
-    // 1 MB'ga hech qanday kombinatsiyada tushirib bo'lmadi (juda kam
-    // uchraydigan holat) — shunga qaramay, topilgan ENG KICHIK natijani
-    // ishlatamiz (baribir asl fayldan ancha yengilroq bo'ladi).
-    if (bestBlob && bestBlob.size < file.size) {
-      return new File([bestBlob], (file.name || "photo").replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" });
-    }
-    return file;
-  } catch (_) {
-    return file; // Canvas/createImageBitmap qo'llab-quvvatlanmasa — asl faylni yuboramiz
+    if (!best) best = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.35 });
+    self.postMessage({ id, ok: true, blob: best });
+  } catch (err) {
+    self.postMessage({ id, ok: false, error: String(err && err.message || err) });
   }
+};
+`;
+
+let _worker = null;
+let _workerJobId = 0;
+const _workerJobs = new Map();
+
+function getCompressWorker() {
+  if (_worker === false) return null;          // qo'llab-quvvatlanmaydi
+  if (_worker) return _worker;
+  try {
+    if (typeof Worker === "undefined" || typeof OffscreenCanvas === "undefined") {
+      _worker = false;
+      return null;
+    }
+    const url = URL.createObjectURL(new Blob([WORKER_SOURCE], { type: "text/javascript" }));
+    _worker = new Worker(url);
+    URL.revokeObjectURL(url);
+    _worker.onmessage = (e) => {
+      const job = _workerJobs.get(e.data.id);
+      if (!job) return;
+      _workerJobs.delete(e.data.id);
+      e.data.ok ? job.resolve(e.data.blob) : job.reject(new Error(e.data.error));
+    };
+    _worker.onerror = () => {
+      // Worker ishdan chiqsa — barcha kutayotgan ishlarni rad etamiz va
+      // asosiy oqimdagi zaxira yo'lga o'tamiz.
+      _workerJobs.forEach((j) => j.reject(new Error("worker error")));
+      _workerJobs.clear();
+      _worker = false;
+    };
+    return _worker;
+  } catch (_) {
+    _worker = false;
+    return null;
+  }
+}
+
+function compressInWorker(blob) {
+  const worker = getCompressWorker();
+  if (!worker) return Promise.reject(new Error("worker unavailable"));
+  const id = ++_workerJobId;
+  return new Promise((resolve, reject) => {
+    _workerJobs.set(id, { resolve, reject });
+    // 20 soniyada javob bo'lmasa — zaxira yo'lga o'tamiz.
+    setTimeout(() => {
+      if (_workerJobs.has(id)) {
+        _workerJobs.delete(id);
+        reject(new Error("worker timeout"));
+      }
+    }, 20000);
+    worker.postMessage({ blob, maxDim: MAX_DIMENSION, target: TARGET_BYTES, id });
+  });
+}
+
+// Faylni rasmga aylantirish. `createImageBitmap` HEIC'da yiqilishi
+// mumkin — u holda <img> orqali dekodlaymiz (brauzer HEIC'ni ko'rsata
+// olsa, canvas ham chiza oladi).
+async function decodeImage(file) {
+  try {
+    return await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch (_) {
+    try {
+      return await createImageBitmap(file);
+    } catch (_) {
+      return await new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("decode failed")); };
+        img.src = url;
+      });
+    }
+  }
+}
+
+async function compressOnMainThread(file) {
+  const src = await decodeImage(file);
+  const sw = src.width || src.naturalWidth;
+  const sh = src.height || src.naturalHeight;
+  const scale = Math.min(1, MAX_DIMENSION / Math.max(sw, sh));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(sw * scale));
+  canvas.height = Math.max(1, Math.round(sh * scale));
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
+  if (src.close) src.close();   // xotira oqmasin (ilgari chaqirilmasdi)
+
+  const encode = (q) => new Promise((res) => canvas.toBlob(res, "image/jpeg", q));
+  let lo = 0.35, hi = 0.92, best = null;
+  for (let i = 0; i < 6; i++) {
+    const q = (lo + hi) / 2;
+    const out = await encode(q);
+    if (!out) break;
+    if (out.size <= TARGET_BYTES) { best = out; lo = q; } else { hi = q; }
+    if (hi - lo < 0.04) break;
+  }
+  if (!best) best = await encode(0.35);
+  canvas.width = canvas.height = 0;   // canvas xotirasini darhol bo'shatamiz
+  return best;
+}
+
+class PhotoTooLargeError extends Error {}
+
+async function compressImageForUpload(file) {
+  if (!file) return file;
+
+  let blob = null;
+  try {
+    blob = await compressInWorker(file);          // 1-yo'l: interfeysni bloklamaydi
+  } catch (_) {
+    try {
+      blob = await compressOnMainThread(file);    // 2-yo'l: zaxira
+    } catch (_) {
+      blob = null;
+    }
+  }
+
+  if (blob && blob.size > 0) {
+    const base = (file.name || "photo").replace(/\.[^.]+$/, "");
+    return new File([blob], base + ".jpg", { type: "image/jpeg" });
+  }
+
+  // Siqishning hech qanday yo'li ishlamadi. Ilgari bu holatda ASL fayl
+  // jimgina yuborilardi — natijada 5 MB HEIC serverga ketib, Telegram
+  // uni rad etardi va xodim tushunarsiz xato ko'rardi. Endi fayl
+  // chegaradan kichik bo'lsa o'zini yuboramiz, katta bo'lsa aniq
+  // xato beramiz.
+  if (file.size <= HARD_MAX_BYTES) return file;
+  throw new PhotoTooLargeError("photo_too_large");
 }
 
 async function handlePickedFiles(fileList) {
@@ -867,7 +1033,15 @@ async function handlePickedFiles(fileList) {
   const existingComment = state.photos[sectionId][0]?.comment || "";
 
   for (const rawFile of files) {
-    const file = await compressImageForUpload(rawFile);
+    let file;
+    try {
+      file = await compressImageForUpload(rawFile);
+    } catch (err) {
+      // Rasmni qayta ishlab bo'lmadi (masalan juda katta HEIC) —
+      // tushunarli xato ko'rsatamiz, jimgina yuborib qo'ymaymiz.
+      await showAlert(t("error_photo_too_large"));
+      continue;
+    }
     // Foydalanuvchiga darhol (yuklanishi tugashini kutmasdan) lokal
     // preview ko'rsatamiz — ilova "qotib qolganday" tuyulmasin.
     const entry = {
@@ -892,7 +1066,14 @@ async function handlePickedFiles(fileList) {
       console.error("[handlePickedFiles] rasm yuklashda xatolik:", err);
       const idx = state.photos[sectionId].indexOf(entry);
       if (idx !== -1) state.photos[sectionId].splice(idx, 1);
-      await showAlert(t("error_submit"));
+      // Xotira oqmasligi uchun preview blob'ini bo'shatamiz.
+      if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+      // 429 (juda ko'p so'rov) va 413 (juda katta rasm) uchun alohida,
+      // tushunarli xabar — ilgari hammasi umumiy "xatolik" edi.
+      const msg = String(err && err.message || "");
+      if (msg.includes("429")) await showAlert(t("error_too_many"));
+      else if (msg.includes("413")) await showAlert(t("error_photo_too_large"));
+      else await showAlert(t("error_submit"));
     }
     renderSectionCard(sectionId);
     updateProgress();
@@ -903,6 +1084,23 @@ async function handlePickedFiles(fileList) {
 function renderSections() {
   const list = document.getElementById("section-list");
   list.innerHTML = "";
+
+  // TUZATILDI — boshi berk ko'cha: agar admin bu filial uchun BARCHA
+  // bo'limlarni yashirgan bo'lsa, ilgari ekran bo'm-bo'sh qolardi,
+  // "Yuborish" tugmasi hech qachon chiqmasdi va hech qanday izoh
+  // ko'rsatilmasdi — xodim nima qilishni bilmay qolardi.
+  if (!state.sections.length) {
+    const box = document.createElement("div");
+    box.className = "sections-empty";
+    box.innerHTML =
+      `<span class="state-icon">${iconMarkup("info")}</span>` +
+      `<h2>${esc(t("sections_empty_title"))}</h2>` +
+      `<p>${esc(t("sections_empty_text"))}</p>`;
+    list.appendChild(box);
+    updateProgress();
+    attachMainButton();
+    return;
+  }
 
   state.sections.forEach((sec) => {
     if (!state.photos[sec.id]) state.photos[sec.id] = [];
@@ -926,12 +1124,16 @@ function renderSectionCard(sectionId) {
   const isDone = photos.length > 0;
 
   card.classList.toggle("done", isDone);
+  // To'ldirilmagan bo'limlar ko'zga tashlanib tursin — xodim qaysi
+  // bo'lim qolganini ro'yxatdan darhol topadi (ilgari faqat "3 / 8"
+  // degan umumiy raqam bor edi, qaysi biri ekani ko'rinmasdi).
+  card.classList.toggle("pending", !isDone);
 
   const thumbsHtml = photos
     .map(
       (p, idx) => `
       <div class="photo-thumb-wrap${p.uploading ? " uploading" : ""}">
-        <img class="photo-preview" src="${p.previewUrl}" />
+        <img class="photo-preview" src="${esc(p.previewUrl)}" />
         <button class="remove-photo-btn" data-section-id="${sectionId}" data-idx="${idx}" ${p.uploading ? "disabled" : ""}>${iconMarkup("close")}</button>
       </div>`
     )
@@ -939,20 +1141,25 @@ function renderSectionCard(sectionId) {
 
   card.innerHTML = `
     <div class="section-top">
-      <div class="section-title">
+      <div class="section-title" data-required-label="${esc(t("section_required_badge"))}">
         <span class="section-status-icon">${isDone ? iconMarkup("check") : ""}</span>
-        <span>${sec.name}</span>
+        <span>${esc(sec.name)}</span>
       </div>
-      <span class="photo-count">${photos.length > 0 ? t("photo_count", { n: photos.length }) : ""}</span>
+      <span class="photo-count">${photos.length > 0 ? esc(t("photo_count", { n: photos.length })) : ""}</span>
     </div>
     <div class="photos-row">
       ${thumbsHtml}
       <button class="add-photo-btn" data-section-id="${sectionId}">
-        ${iconMarkup("plus")}<span>${t("add_photo_btn")}</span>
+        ${iconMarkup("plus")}<span>${esc(t("add_photo_btn"))}</span>
       </button>
     </div>
-    ${isDone ? `<textarea class="comment-input" rows="2" placeholder="${t("comment_placeholder")}">${photos[0].comment || ""}</textarea>` : ""}
+    ${isDone ? `<textarea class="comment-input" rows="2" placeholder="${esc(t("comment_placeholder"))}"></textarea>` : ""}
   `;
+
+  // Izohni innerHTML orqali emas, `value` orqali qo'yamiz — matnda
+  // </textarea> bo'lsa ham hech qanday HTML "sinmaydi".
+  const commentBox = card.querySelector(".comment-input");
+  if (commentBox) commentBox.value = photos[0].comment || "";
 
   card.querySelector(".add-photo-btn").addEventListener("click", () => {
     activeSectionId = sectionId;
@@ -964,6 +1171,8 @@ function renderSectionCard(sectionId) {
       const idx = parseInt(btn.dataset.idx, 10);
       const [removed] = state.photos[sectionId].splice(idx, 1);
       if (removed && removed.id) deleteDraftPhoto(removed.id);
+      // Xotira oqmasin — blob URL hech qachon bo'shatilmasdi.
+      if (removed && removed.previewUrl) URL.revokeObjectURL(removed.previewUrl);
       renderSectionCard(sectionId);
       updateProgress();
       attachMainButton();
@@ -1001,30 +1210,110 @@ function updateProgress() {
   document.getElementById("progress-text").textContent = t("sections_progress", { done, total });
 }
 
+// ============================================================
+//  YUBORISH TUGMASI
+//
+//  TUZATILDI: ilgari tugma barcha bo'limlar to'lmaguncha butunlay
+//  YASHIRILARDI (`hide()`). Xodim kulrang, bosilmaydigan tugmani emas,
+//  umuman hech qanday tugmani ko'rmasdi — va nega yo'qligi hech qayerda
+//  yozilmasdi. Yangi xodim buni "ilova buzuq" deb tushunardi.
+//
+//  Endi tugma HAR DOIM ko'rinadi: to'lmaguncha o'chiq (kulrang) va
+//  ustida nechta bo'lim qolgani yozilgan bo'ladi, to'lgach yashil
+//  "✅ Yuborish" bo'lib faollashadi.
+// ============================================================
+const MB_DISABLED_BG = "#9AA3AC";
+const MB_DISABLED_FG = "#F2F5F7";
+
+function isReportComplete() {
+  const total = state.sections.length;
+  const done = state.sections.filter((s) => state.photos[s.id]?.length > 0).length;
+  return total > 0 && done === total;
+}
+
 function attachMainButton() {
   const total = state.sections.length;
   const done = state.sections.filter((s) => state.photos[s.id]?.length > 0).length;
-  const allDone = total > 0 && done === total;
+  const remaining = total - done;
 
-  tg.MainButton.setText(t("mainbutton_submit"));
-  if (allDone) {
-    tg.MainButton.show();
-    tg.MainButton.enable();
-  } else {
+  // Bu filial uchun bo'lim umuman sozlanmagan — yuboradigan narsa yo'q.
+  // Tugma o'rniga ekranda tushunarli xabar ko'rsatiladi (renderSections).
+  if (total === 0) {
     tg.MainButton.hide();
+    return;
+  }
+
+  const themeBg = (tg.themeParams && tg.themeParams.button_color) || "#1F7A5C";
+  const themeFg = (tg.themeParams && tg.themeParams.button_text_color) || "#FFFFFF";
+
+  const params = remaining === 0
+    ? { text: t("mainbutton_submit"), color: themeBg, text_color: themeFg,
+        is_active: true, is_visible: true }
+    : { text: t("mainbutton_remaining", { n: remaining }),
+        color: MB_DISABLED_BG, text_color: MB_DISABLED_FG,
+        is_active: false, is_visible: true };
+
+  try {
+    tg.MainButton.setParams(params);
+  } catch (_) {
+    // Eski Telegram mijozlarida setParams/is_active bo'lmasligi mumkin —
+    // o'sha holatda eski usulga qaytamiz.
+    tg.MainButton.setText(params.text);
+    tg.MainButton.show();
+    if (remaining === 0) tg.MainButton.enable();
+    else if (tg.MainButton.disable) tg.MainButton.disable();
   }
 }
 
+// TUZATILDI: ilgari hech qanday "in-flight" himoyasi yo'q edi —
+// MainButton'ni ikki marta bosish ikkita parallel yuborishni boshlardi.
+let _submitting = false;
 tg.MainButton.onClick(async () => {
-  await submitReport();
+  if (_submitting) return;
+  // Himoya: `is_active: false` ni qo'llab-quvvatlamaydigan eski Telegram
+  // mijozida bosish o'tib ketishi mumkin — shu yerda qayta tekshiramiz.
+  if (!isReportComplete()) {
+    const total = state.sections.length;
+    const done = state.sections.filter((s) => state.photos[s.id]?.length > 0).length;
+    await showAlert(t("alert_incomplete", { n: total - done }));
+    return;
+  }
+  _submitting = true;
+  try {
+    await submitReport();
+  } finally {
+    _submitting = false;
+  }
 });
 
 // ---------- 3. Yuborish ----------
+// Ekrandagi barcha izohlarni serverga MAJBURIY saqlaydi.
+// TUZATILDI: izoh serverga faqat `blur` hodisasida yuborilardi, lekin
+// Telegram MainButton — WebView TASHQARISIDAGI native tugma, u bosilganda
+// textarea fokusni yo'qotmaydi va `blur` umuman ishlamaydi. Natijada
+// xodim izoh yozib darhol "Yuborish" bossa, izoh guruhga tushmasdi va
+// xodim buni sezmasdi ham.
+async function flushAllComments() {
+  const jobs = [];
+  document.querySelectorAll(".comment-input").forEach((el) => {
+    const card = el.closest(".section-card");
+    if (!card) return;
+    const sectionId = parseInt(String(card.id).replace("section-", ""), 10);
+    const photos = state.photos[sectionId] || [];
+    photos.forEach((p) => {
+      p.comment = el.value;
+      if (p.id) jobs.push(updateDraftPhotoComment(p.id, el.value));
+    });
+  });
+  if (jobs.length) await Promise.allSettled(jobs);
+}
+
 async function submitReport() {
   showLoading(t("loading_sending"));
   tg.MainButton.showProgress();
 
   try {
+    await flushAllComments();
     // E'TIBOR: rasmlar bu yerda YUKLANMAYDI — ular xodim rasm olgan
     // zahoti /api/draft/photo orqali allaqachon serverga saqlangan.
     // Shu tufayli bu so'rov juda yengil (faqat matn) va sekin/beqaror
@@ -1038,17 +1327,33 @@ async function submitReport() {
     formData.append("checklist_type_id", state.checklistType.id);
     formData.append("lang", getLang());
 
-    const res = await fetchWithRetry(`${API_BASE}/api/submit`, { method: "POST", body: formData }, 3, 1500, 40000);
+    // TUZATILDI: ilgari bu yerda `retries=3` va 5xx'da ham qayta urinish
+    // yoqilgan edi — sekin internetda bu guruhga 2-4 nusxa hisobot
+    // tushishiga olib kelardi. Endi so'rov juda yengil (server faqat
+    // navbatga yozadi, ~0.2 s), shuning uchun bitta urinish yetarli;
+    // ulanish umuman o'rnatilmasa bir marta qayta uriniladi.
+    const res = await fetchWithRetry(`${API_BASE}/api/submit`,
+      { method: "POST", body: formData }, 1, 1200, 30000, false);
+
     if (!res.ok) {
       const bodyText = await res.text();
       let detail = bodyText;
       try {
-        const parsed = JSON.parse(bodyText);
-        detail = parsed.detail || bodyText;
-      } catch (_) {
-        // JSON emas — xom matnning o'zi ishlatiladi
+        detail = (JSON.parse(bodyText).detail) || bodyText;
+      } catch (_) { /* JSON emas — xom matn ishlatiladi */ }
+
+      // 409 = hisobot allaqachon qabul qilingan (masalan tugma ikki marta
+      // bosilgan). Bu XATO EMAS — muvaffaqiyat deb ko'rsatamiz, aks holda
+      // xodim allaqachon yuborilgan hisobotni qayta yuborishga urinadi.
+      if (res.status === 409) {
+        state.photos = {};
+        hideLoading();
+        tg.MainButton.hideProgress();
+        tg.MainButton.hide();
+        showScreen("screen-success");
+        return;
       }
-      throw new Error(`HTTP ${res.status}: ${detail}`);
+      throw new Error(detail || `HTTP ${res.status}`);
     }
 
     state.photos = {};
@@ -1107,7 +1412,11 @@ function adminForm(extraFields) {
 }
 
 async function adminFetch(path, options = {}) {
-  const res = await fetch(`${API_BASE}${path}`, options);
+  // TUZATILDI: timeout yo'q edi — ulanish osilsa admin panel abadiy
+  // "Yuklanmoqda" holatida qolardi. GET uchun qayta urinish xavfsiz,
+  // POST/PUT/DELETE uchun esa faqat ulanish o'rnatilmagan holatda.
+  const isRead = !options.method || String(options.method).toUpperCase() === "GET";
+  const res = await fetchWithRetry(`${API_BASE}${path}`, options, isRead ? 2 : 1, 900, 20000, isRead);
   if (!res.ok) {
     let detail = t("error_generic");
     try {
@@ -1136,7 +1445,7 @@ async function loadAdminUsers() {
       el.className = "admin-list-item" + (u.is_superadmin ? " is-superadmin" : "");
       el.innerHTML = `
         <div class="admin-list-main">
-          <div class="admin-list-title">${u.full_name || t("users_no_name")} ${u.is_superadmin ? `<span class="badge">${iconMarkup("crown")}</span>` : ""}</div>
+          <div class="admin-list-title">${esc(u.full_name || t("users_no_name"))} ${u.is_superadmin ? `<span class="badge">${iconMarkup("crown")}</span>` : ""}</div>
           <div class="admin-list-sub">${t("users_id_label", { id: u.telegram_user_id })}</div>
         </div>
         <div class="admin-list-actions">
@@ -1171,7 +1480,7 @@ async function loadAdminUsers() {
       regularAdmins.forEach((u) => list.appendChild(renderUserRow(u)));
     }
   } catch (e) {
-    list.innerHTML = `<p class="hint">${t("load_error_prefix")}${e.message}</p>`;
+    list.innerHTML = `<p class="hint">${esc(t("load_error_prefix"))}${esc(e.message)}</p>`;
   }
 }
 
@@ -1269,7 +1578,7 @@ async function loadAdminFilials() {
       el.className = "admin-list-item" + (f.is_active ? "" : " is-inactive");
       el.innerHTML = `
         <div class="admin-list-main">
-          <div class="admin-list-title">${f.name} ${f.is_active ? "" : `<span class="badge-text">${t("inactive_badge")}</span>`}</div>
+          <div class="admin-list-title">${esc(f.name)} ${f.is_active ? "" : `<span class="badge-text">${t("inactive_badge")}</span>`}</div>
           <div class="admin-list-sub">${t("filials_meta", { id: f.id, topic: f.thread_id ? `#${f.thread_id}` : t("filials_topic_unlinked") })}</div>
         </div>
         <div class="admin-list-actions">
@@ -1286,7 +1595,7 @@ async function loadAdminFilials() {
       list.appendChild(el);
     });
   } catch (e) {
-    list.innerHTML = `<p class="hint">${t("load_error_prefix")}${e.message}</p>`;
+    list.innerHTML = `<p class="hint">${esc(t("load_error_prefix"))}${esc(e.message)}</p>`;
   }
 }
 
@@ -1465,7 +1774,7 @@ async function initAdminSections() {
     });
     await loadAdminSections();
   } catch (e) {
-    subtabsEl.innerHTML = `<p class="hint">${t("load_error_prefix")}${e.message}</p>`;
+    subtabsEl.innerHTML = `<p class="hint">${esc(t("load_error_prefix"))}${esc(e.message)}</p>`;
   }
 }
 
@@ -1490,7 +1799,7 @@ async function loadAdminSections() {
       el.innerHTML = `
         <span class="drag-handle" aria-label="${t("sections_drag_label")}">${iconMarkup("drag")}</span>
         <div class="admin-list-main">
-          <div class="admin-list-title section-list-title">${pickLocalized(s)} ${s.is_active ? "" : `<span class="badge-text">${t("inactive_badge")}</span>`}</div>
+          <div class="admin-list-title section-list-title">${esc(pickLocalized(s))} ${s.is_active ? "" : `<span class="badge-text">${t("inactive_badge")}</span>`}</div>
         </div>
         <div class="admin-list-actions">
           <button class="icon-btn" data-action="visibility" aria-label="${t("sections_visibility_label")}">${iconMarkup("building")}</button>
@@ -1507,7 +1816,7 @@ async function loadAdminSections() {
     });
     initSectionsSortable(list);
   } catch (e) {
-    list.innerHTML = `<p class="hint">${t("load_error_prefix")}${e.message}</p>`;
+    list.innerHTML = `<p class="hint">${esc(t("load_error_prefix"))}${esc(e.message)}</p>`;
     destroySectionsSortable();
   }
 }

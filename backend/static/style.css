@@ -158,6 +158,56 @@ html, body {
   box-shadow: 0 1px 3px rgba(31, 122, 92, 0.1);
 }
 
+/* To'ldirilmagan bo'lim — kutilayotgan holat. Chap chekkadagi amber
+   chiziq va "kerak" yorlig'i xodimga qaysi bo'lim qolganini ro'yxatni
+   aylantirmasdan ko'rsatadi. */
+.section-card.pending {
+  border-left-color: #D99A2B;
+}
+.section-card.pending .section-status-icon {
+  border-color: #D99A2B;
+  border-style: dashed;
+}
+.section-card.pending .section-title::after {
+  content: attr(data-required-label);
+  margin-left: 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #A8741A;
+  background: rgba(217, 154, 43, 0.16);
+  padding: 2px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Bu filial uchun bo'lim sozlanmagan holati */
+.sections-empty {
+  text-align: center;
+  padding: 40px 24px;
+  color: var(--text-muted, #6b7280);
+}
+.sections-empty .state-icon {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 14px;
+  color: #D99A2B;
+}
+.sections-empty .state-icon svg { width: 100%; height: 100%; }
+.sections-empty h2 {
+  font-size: 17px;
+  margin: 0 0 8px;
+  color: var(--text, #111827);
+}
+.sections-empty p {
+  font-size: 14px;
+  margin: 0;
+  line-height: 1.5;
+}
+
 .section-top {
   display: flex;
   align-items: center;

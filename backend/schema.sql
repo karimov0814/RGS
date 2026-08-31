@@ -160,16 +160,44 @@ BEGIN
             'Фото чек-листов: Чек-лист Чистоты, Чек-лист МС, КЛН, Бланк уборки ГСУ (11:00, 15:00, 18:00, 21:00, Закрытие смены)'
         );
 
-        INSERT INTO sections (name, sort_order, is_active) VALUES
-            ('Фото внешней территории и фасада', 1, TRUE),
-            ('Фото зала и туалетов', 2, TRUE),
-            ('Фото прилавка', 3, TRUE),
-            ('Фото кухни (1. Станция пиццы, 2. Станция Вок, 3. Станция сборки бургеров и роллов, 4. Панировочная станция, 5. Станция фри, 6. Станция мойки и моповые зоны)', 4, TRUE),
-            ('Фото служебного помещения', 5, TRUE),
-            ('Фото доставочных помещений', 6, TRUE),
-            ('Фото сотрудников после пятиминутки и командной доски (только утром)', 7, TRUE),
-            ('Фото чек-листов: Чек-лист Чистоты, Чек-лист МС, КЛН, Бланк уборки ГСУ (11:00, 15:00, 18:00, 21:00, Закрытие смены)', 8, TRUE)
-        ON CONFLICT (name) DO UPDATE SET sort_order = EXCLUDED.sort_order, is_active = TRUE;
+        -- TUZATILDI (BLOKER): bu yerda ilgari `ON CONFLICT (name)` ishlatilgan
+        -- edi, lekin `sections` jadvalida `name` ustuni bo'yicha UNIQUE cheklov
+        -- YO'Q (u eski schema versiyasidan qolgan va bu faylda umuman
+        -- yaratilmaydi). Natijada TOZA bazada butun schema.sql shu qatorda
+        -- yiqilardi:
+        --     ERROR: there is no unique or exclusion constraint
+        --            matching the ON CONFLICT specification
+        -- va ilova umuman ishga tushmasdi. Ishlayotgan tizim faqat eski
+        -- deploydan qolgan indeks tufayli tirik edi — ya'ni bazani qayta
+        -- yaratish yoki zaxiradan tiklash imkonsiz edi.
+        -- Endi hech qanday cheklovga bog'liq bo'lmagan INSERT ... SELECT
+        -- ishlatiladi: mavjud nom qayta qo'shilmaydi, tartibi yangilanadi.
+        WITH seed(name, sort_order) AS (
+            VALUES
+                ('Фото внешней территории и фасада', 1),
+                ('Фото зала и туалетов', 2),
+                ('Фото прилавка', 3),
+                ('Фото кухни (1. Станция пиццы, 2. Станция Вок, 3. Станция сборки бургеров и роллов, 4. Панировочная станция, 5. Станция фри, 6. Станция мойки и моповые зоны)', 4),
+                ('Фото служебного помещения', 5),
+                ('Фото доставочных помещений', 6),
+                ('Фото сотрудников после пятиминутки и командной доски (только утром)', 7),
+                ('Фото чек-листов: Чек-лист Чистоты, Чек-лист МС, КЛН, Бланк уборки ГСУ (11:00, 15:00, 18:00, 21:00, Закрытие смены)', 8)
+        )
+        INSERT INTO sections (name, sort_order, is_active)
+        SELECT s.name, s.sort_order, TRUE FROM seed s
+        WHERE NOT EXISTS (SELECT 1 FROM sections x WHERE x.name = s.name);
+
+        UPDATE sections SET is_active = TRUE
+        WHERE name IN (
+            'Фото внешней территории и фасада',
+            'Фото зала и туалетов',
+            'Фото прилавка',
+            'Фото кухни (1. Станция пиццы, 2. Станция Вок, 3. Станция сборки бургеров и роллов, 4. Панировочная станция, 5. Станция фри, 6. Станция мойки и моповые зоны)',
+            'Фото служебного помещения',
+            'Фото доставочных помещений',
+            'Фото сотрудников после пятиминутки и командной доски (только утром)',
+            'Фото чек-листов: Чек-лист Чистоты, Чек-лист МС, КЛН, Бланк уборки ГСУ (11:00, 15:00, 18:00, 21:00, Закрытие смены)'
+        );
 
         INSERT INTO schema_migrations (id) VALUES ('seed_sections_v1');
     END IF;
@@ -288,8 +316,28 @@ ALTER TABLE sections ADD COLUMN IF NOT EXISTS checklist_type_id INTEGER
 -- Eski global UNIQUE(name) endi kerak emas — bir xil nomdagi bo'lim
 -- turli chek-list turlarida qayta-qayta bo'lishi mumkin bo'lishi kerak.
 DROP INDEX IF EXISTS sections_name_unique;
-CREATE UNIQUE INDEX IF NOT EXISTS sections_name_per_checklist_unique
-    ON sections (checklist_type_id, name);
+
+-- ============================================================
+--  TUZATILDI (BLOKER): bu yerda ilgari
+--      CREATE UNIQUE INDEX sections_name_per_checklist_unique
+--          ON sections (checklist_type_id, name);
+--  turar edi, va fayl oxirida u DROP qilinardi. Ya'ni indeks HAR
+--  startupda yaratilib, keyin o'chirilardi.
+--
+--  Bug: ilova admin panelda bir xil nomli ikkita bo'lim qo'shishga
+--  bemalol ruxsat berardi (HTTP 200), lekin KEYINGI restart/deployda
+--  shu indeksni yaratib bo'lmasdi:
+--      UniqueViolationError: could not create unique index …
+--      ERROR: Application startup failed. Exiting.
+--  Railway 10 marta qayta urinib, taslim bo'lardi — ya'ni bitta oddiy
+--  admin harakati ilovani butunlay o'ldirardi, va sabab bilan oqibat
+--  orasida kunlar bo'lishi mumkin edi.
+--
+--  Endi indeks umuman yaratilmaydi — takroriy nom ILOVA DARAJASIDA
+--  (db.create_section / db.update_section) tekshiriladi va adminga
+--  darhol tushunarli xato ko'rsatiladi. Shu bilan schema.sql bazadagi
+--  ma'lumotdan qat'i nazar HAR DOIM muvaffaqiyatli bajariladi.
+-- ============================================================
 
 -- Mavjud (checklist_type_id hali NULL bo'lgan) 8 ta bo'lim — FAQAT BIR
 -- MARTA — "Smena ochilishi" turiga biriktiriladi, so'ngra xuddi shu
@@ -314,15 +362,20 @@ BEGIN
 
         -- Xuddi shu bo'limlarni "Smena topshirilishi" va "Smena yopilishi"
         -- uchun nusxalab qo'yamiz (yangi id'lar bilan, mustaqil qatorlar).
+        -- TUZATILDI: `ON CONFLICT (checklist_type_id, name)` endi mavjud
+        -- bo'lmagan indeksga tayanardi (yuqoriga qarang). NOT EXISTS bilan
+        -- almashtirildi — hech qanday cheklovga bog'liq emas.
         INSERT INTO sections (name, sort_order, is_active, checklist_type_id)
-        SELECT name, sort_order, is_active, handover_id
-        FROM sections WHERE checklist_type_id = opening_id
-        ON CONFLICT (checklist_type_id, name) DO NOTHING;
+        SELECT s.name, s.sort_order, s.is_active, handover_id
+        FROM sections s WHERE s.checklist_type_id = opening_id
+          AND NOT EXISTS (SELECT 1 FROM sections x
+                          WHERE x.checklist_type_id = handover_id AND x.name = s.name);
 
         INSERT INTO sections (name, sort_order, is_active, checklist_type_id)
-        SELECT name, sort_order, is_active, closing_id
-        FROM sections WHERE checklist_type_id = opening_id
-        ON CONFLICT (checklist_type_id, name) DO NOTHING;
+        SELECT s.name, s.sort_order, s.is_active, closing_id
+        FROM sections s WHERE s.checklist_type_id = opening_id
+          AND NOT EXISTS (SELECT 1 FROM sections x
+                          WHERE x.checklist_type_id = closing_id AND x.name = s.name);
 
         INSERT INTO schema_migrations (id) VALUES ('assign_sections_checklist_type_v1');
     END IF;
@@ -429,11 +482,8 @@ UPDATE sections SET name_en = name WHERE name_en IS NULL;
 UPDATE checklist_types SET name_ru = name_uz WHERE name_ru IS NULL;
 UPDATE checklist_types SET name_en = name_uz WHERE name_en IS NULL;
 
--- Bo'lim nomlari endi 3 ta alohida til ustunida saqlanadi, shuning uchun
--- eski global "bitta tildagi nom noyob bo'lishi kerak" cheklovi endi
--- ma'noni yo'qotdi (masalan bitta bo'lim uz/ru/en bo'yicha turlicha
--- uzunlikda bo'lishi mumkin, lekin ayni checklist ichida takrorlanmasligi
--- muhim emas — admin buni o'zi nazorat qiladi).
+-- Eski deploylardan qolgan bo'lsa — olib tashlaymiz (yuqoridagi izohga
+-- qarang: takroriy nom endi ilova darajasida tekshiriladi).
 DROP INDEX IF EXISTS sections_name_per_checklist_unique;
 
 -- ============================================================
@@ -542,3 +592,107 @@ ALTER TABLE draft_photos ALTER COLUMN photo_data DROP NOT NULL;
 -- chatidan HAM o'chirib tashlanadi (chatni tartibsiz to'ldirib
 -- yubormasligi uchun).
 ALTER TABLE draft_photos ADD COLUMN IF NOT EXISTS telegram_message_id BIGINT;
+
+-- ============================================================
+--  BO'LIM ID'SINI TEKSHIRISH (foreign key)
+--
+--  Muammo edi: `draft_photos.section_id` da FK YO'Q edi, `submission_photos`
+--  da esa BOR. Natijada mavjud bo'lmagan section_id bilan yuklangan rasm
+--  guruhga MUVAFFAQIYATLI yuborilardi, keyin bazaga yozishda FK xatosi
+--  chiqib 500 qaytarardi va qoralama o'chirilmasdi — xodim "Yuborish"ni
+--  har bosganda guruhga yana bitta ortiqcha rasm tushardi va u hech
+--  qachon hisobotni yakunlay olmasdi ("zaharlangan qoralama").
+--
+--  FK qo'shishdan oldin mavjud yaroqsiz qatorlarni tozalaymiz (qoralama
+--  vaqtinchalik ma'lumot, yo'qotish xavfi yo'q).
+-- ============================================================
+DELETE FROM draft_photos dp
+WHERE NOT EXISTS (SELECT 1 FROM sections s WHERE s.id = dp.section_id);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'draft_photos_section_id_fkey'
+    ) THEN
+        ALTER TABLE draft_photos
+            ADD CONSTRAINT draft_photos_section_id_fkey
+            FOREIGN KEY (section_id) REFERENCES sections(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+-- ============================================================
+--  YETKAZISH NAVBATI (outbox)
+--
+--  Nima uchun kerak: Telegram bitta guruhga daqiqasiga ~20 ta xabar
+--  qabul qiladi. Smena almashinuvida 10 xodim × 8 bo'lim = 80 xabar bir
+--  zumda urinardi va HAMMASI 429 (flood control) ga tushib, hisobotlar
+--  "Telegram bilan aloqa muammosi" xatosi bilan yo'qolardi (o'lchov:
+--  10 xodimdan 0 tasi yubora oldi).
+--
+--  Endi "Yuborish" bosilganda hisobot shu jadvalga YOZILADI va xodimga
+--  darhol javob beriladi. Fon worker'i esa navbatni Telegram cheklovini
+--  hurmat qilgan holda, o'z tezligida bo'shatadi. Xodim kutmaydi, xato
+--  ko'rmaydi, va hech narsa yo'qolmaydi — server qayta ishga tushsa ham
+--  navbat bazada saqlanib qoladi.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS outbox (
+    id                BIGSERIAL PRIMARY KEY,
+    submission_id     INTEGER NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+    telegram_user_id  BIGINT NOT NULL,
+    filial_id         INTEGER,
+    filial_name       TEXT NOT NULL,
+    section_id        INTEGER REFERENCES sections(id) ON DELETE SET NULL,
+    seq               INTEGER NOT NULL DEFAULT 0,   -- bo'limlar tartibi saqlanadi
+    caption           TEXT NOT NULL,
+    photos            JSONB NOT NULL,               -- [{file_id, comment, backup_message_id}]
+    status            TEXT NOT NULL DEFAULT 'pending',  -- pending | sent | failed
+    attempts          INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_error        TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    sent_at           TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_outbox_pending
+    ON outbox (next_attempt_at, id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_outbox_submission ON outbox (submission_id);
+
+-- Hisobot yetkazilganini xodimga bir marta xabar qilish uchun.
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS delivery_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
+
+-- ============================================================
+--  ZAXIRA NUSXALARNI O'CHIRISH NAVBATI
+--
+--  Muammo edi: zaxira nusxa xabari `asyncio.create_task(...)` bilan
+--  "yuborib yuborilardi" — natija hech qayerda saqlanmasdi (Python bunday
+--  task'ni tugashidan oldin yig'ishtirib yuborishi mumkin), va
+--  `delete_message` HAR QANDAY xatoni jimgina yutardi. Band paytda
+--  Telegram 429 qaytarsa — o'chirish so'rovi shunchaki yo'qolardi va
+--  zaxira nusxa xodimning chatida abadiy qolib ketardi. O'lchov: 80 ta
+--  zaxira nusxadan 25 tasi o'chirilmay qoldi.
+--
+--  Endi har bir o'chirish shu jadvalga yoziladi va worker uni
+--  muvaffaqiyatli bajarilgunicha (yoki xabar allaqachon yo'q ekani
+--  aniqlangunicha) qayta uradi.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS pending_deletions (
+    id               BIGSERIAL PRIMARY KEY,
+    chat_id          BIGINT NOT NULL,
+    message_id       BIGINT NOT NULL,
+    attempts         INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (chat_id, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_deletions_due ON pending_deletions (next_attempt_at, id);
+
+-- ============================================================
+--  YETISHMAYOTGAN INDEKSLAR (audit topilmasi)
+-- ============================================================
+CREATE INDEX IF NOT EXISTS idx_submission_photos_submission ON submission_photos (submission_id);
+CREATE INDEX IF NOT EXISTS idx_submissions_filial ON submissions (filial_id);
+CREATE INDEX IF NOT EXISTS idx_submissions_created ON submissions (created_at);
+CREATE INDEX IF NOT EXISTS idx_filial_section_hidden_section ON filial_section_hidden (section_id);
+CREATE INDEX IF NOT EXISTS idx_drafts_updated_at ON drafts (updated_at);
