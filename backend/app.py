@@ -102,11 +102,11 @@ RATE_LIMIT_WINDOW = int(os.environ.get("PHOTO_RATE_LIMIT_WINDOW", "60"))  # oyna
 # Yuborish endi juda yengil (faqat bazaga yozadi), lekin baribir cheklaymiz —
 # ilgari bu endpointda cheklov umuman yo'q edi.
 SUBMIT_RATE_LIMIT = int(os.environ.get("SUBMIT_RATE_LIMIT", "10"))
-_rate_hits: dict[int, list[float]] = {}
+_rate_hits: dict[tuple, list[float]] = {}
 _rate_last_sweep = 0.0
 
 
-def _check_rate_limit(user_id: int, limit: int | None = None) -> None:
+def _check_rate_limit(user_id: int, limit: int | None = None, bucket: str = "photo") -> None:
     """user_id uchun sirpanuvchi-oyna cheklovini tekshiradi. Chegaradan
     oshsa 429 (Too Many Requests) ko'taradi.
 
@@ -126,12 +126,21 @@ def _check_rate_limit(user_id: int, limit: int | None = None) -> None:
         for uid in [uid for uid, ts in _rate_hits.items() if not ts or ts[-1] <= cutoff]:
             _rate_hits.pop(uid, None)
 
-    hits = _rate_hits.setdefault(user_id, [])
+    # MUHIM TUZATISH: ilgari rasm yuklash va "Yuborish" BITTA hisoblagichni
+    # (user_id bo'yicha) bo'lishardi, lekin "Yuborish" uchun chegara 10 edi.
+    # Xodim oxirgi 60 soniyada 10 ta rasm yuklagan bo'lsa (smena almashinuvida
+    # hamma shoshilganda odatiy hol), "Yuborish" 429 bilan rad etilardi:
+    # "Juda ko'p so'rov yuborildi... qayta urinib ko'ring" — oyna siljigach
+    # esa ishlardi. Endi har bir amal turi (bucket) o'z hisoblagichiga ega.
+    key = (user_id, bucket)
+    hits = _rate_hits.setdefault(key, [])
     hits[:] = [t for t in hits if t > cutoff]
     if len(hits) >= limit:
+        retry_after = max(1, int(hits[0] + RATE_LIMIT_WINDOW - now) + 1)
         raise HTTPException(
             status_code=429,
             detail="Juda ko'p so'rov yuborildi. Bir oz kutib, qayta urinib ko'ring.",
+            headers={"Retry-After": str(retry_after)},
         )
     hits.append(now)
 
@@ -152,6 +161,12 @@ def _check_rate_limit(user_id: int, limit: int | None = None) -> None:
 # ============================================================
 MAX_PHOTO_BYTES = int(os.environ.get("MAX_PHOTO_BYTES", str(10 * 1024 * 1024)))
 _CHUNK = 64 * 1024
+
+# Bitta bo'limga olinadigan rasmlarning maksimal soni (hamma bo'limlar uchun
+# bir xil). Frontend ham shu qiymatni ishlatadi (static/app.js: MAX_PHOTOS_PER_SECTION).
+MAX_PHOTOS_PER_SECTION = int(os.environ.get("MAX_PHOTOS_PER_SECTION", "10"))
+PHOTO_LIMIT_DETAIL = (f"PHOTO_LIMIT: Bitta bo'limga ko'pi bilan {MAX_PHOTOS_PER_SECTION} ta "
+                      "rasm olish mumkin.")
 
 # Rasm formatlarining "magic bytes"lari — Telegram faqat rasmni qabul
 # qiladi, shuning uchun boshqa fayl turlarini shu yerda rad etamiz.
@@ -671,6 +686,10 @@ async def post_draft_photo(
             detail="Bo'lim topilmadi yoki bu smenaga tegishli emas. Sahifani yangilab ko'ring.",
         )
 
+    # Chegara oldindan tekshiriladi — ortiqcha rasm Telegramga ham yuklanmaydi.
+    if await db.count_draft_section_photos(user["id"], section_id) >= MAX_PHOTOS_PER_SECTION:
+        raise HTTPException(status_code=400, detail=PHOTO_LIMIT_DETAIL)
+
     data = await _read_upload_limited(file)
 
     if filial_id is not None or checklist_type_id is not None:
@@ -686,7 +705,13 @@ async def post_draft_photo(
         content_type=file.content_type or "image/jpeg",
         telegram_file_id=sent["file_id"],
         telegram_message_id=sent["message_id"],
+        max_per_section=MAX_PHOTOS_PER_SECTION,
     )
+    if photo is None:
+        # Parallel so'rovlar chegarani to'ldirib qo'ygan — Telegramga
+        # yuborilgan zaxira nusxani o'chirish navbatiga qo'yamiz.
+        await db.enqueue_deletion(user["id"], sent["message_id"])
+        raise HTTPException(status_code=400, detail=PHOTO_LIMIT_DETAIL)
     return {
         "ok": True,
         "photo": {
@@ -833,7 +858,7 @@ async def submit(
     """
     lang = _norm_lang(lang)
     user = await _check_auth(init_data)
-    _check_rate_limit(user["id"], limit=SUBMIT_RATE_LIMIT)
+    _check_rate_limit(user["id"], limit=SUBMIT_RATE_LIMIT, bucket="submit")
 
     filial = await db.get_filial(filial_id)
     if not filial:

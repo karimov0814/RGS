@@ -588,9 +588,24 @@ async def set_draft_meta(telegram_user_id: int, filial_id: Optional[int],
     return dict(row)
 
 
+async def count_draft_section_photos(telegram_user_id: int, section_id: int) -> int:
+    """Xodimning qoralamasidagi shu bo'limga tegishli rasmlar soni."""
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """
+        SELECT count(*) AS c FROM draft_photos dp
+        JOIN drafts d ON d.id = dp.draft_id
+        WHERE d.telegram_user_id = $1 AND dp.section_id = $2
+        """,
+        telegram_user_id, section_id,
+    )
+    return row["c"]
+
+
 async def add_draft_photo(telegram_user_id: int, section_id: int, comment: Optional[str],
                            filename: str, content_type: str, telegram_file_id: str,
-                           telegram_message_id: Optional[int] = None) -> dict:
+                           telegram_message_id: Optional[int] = None,
+                           max_per_section: Optional[int] = None) -> Optional[dict]:
     """E'TIBOR: rasmning bayti (photo_data) endi bu yerga YOZILMAYDI —
     rasm allaqachon Telegramga (xodimning shaxsiy chatiga, zaxira sifatida)
     yuborilgan va uning `telegram_file_id`si shu yerda saqlanadi. Shu
@@ -599,15 +614,28 @@ async def add_draft_photo(telegram_user_id: int, section_id: int, comment: Optio
     qolganda) chatdan o'chirib tashlash uchun saqlanadi."""
     pool = await get_pool()
     draft = await get_or_create_draft(telegram_user_id)
-    row = await pool.fetchrow(
-        """
-        INSERT INTO draft_photos (draft_id, section_id, comment, filename, content_type, telegram_file_id, telegram_message_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, draft_id, section_id, comment, filename, content_type, created_at
-        """,
-        draft["id"], section_id, comment, filename, content_type, telegram_file_id, telegram_message_id,
-    )
-    await pool.execute("UPDATE drafts SET updated_at = now() WHERE id = $1", draft["id"])
+    # Bo'lim boshiga rasm chegarasi ATOMIK tekshiriladi: qoralama qatorini
+    # qulflab, sanab, keyin qo'shamiz — bir vaqtda kelgan ikkita so'rov
+    # chegarani oshirib yuborolmaydi. Chegaraga yetgan bo'lsa None qaytadi.
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.fetchrow("SELECT id FROM drafts WHERE id = $1 FOR UPDATE", draft["id"])
+            if max_per_section is not None:
+                cnt = await conn.fetchval(
+                    "SELECT count(*) FROM draft_photos WHERE draft_id = $1 AND section_id = $2",
+                    draft["id"], section_id,
+                )
+                if cnt >= max_per_section:
+                    return None
+            row = await conn.fetchrow(
+                """
+                INSERT INTO draft_photos (draft_id, section_id, comment, filename, content_type, telegram_file_id, telegram_message_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id, draft_id, section_id, comment, filename, content_type, created_at
+                """,
+                draft["id"], section_id, comment, filename, content_type, telegram_file_id, telegram_message_id,
+            )
+            await conn.execute("UPDATE drafts SET updated_at = now() WHERE id = $1", draft["id"])
     return dict(row)
 
 

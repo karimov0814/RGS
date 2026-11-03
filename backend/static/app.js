@@ -187,7 +187,7 @@ async function uploadDraftPhoto(sectionId, comment, file) {
   if (state.filial) fd.append("filial_id", state.filial.id);
   if (state.checklistType) fd.append("checklist_type_id", state.checklistType.id);
   const res = await fetchWithRetry(`${API_BASE}/api/draft/photo`, { method: "POST", body: fd });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   const data = await res.json();
   return data.photo; // {id, section_id, comment, image_url}
 }
@@ -864,6 +864,7 @@ document.addEventListener("visibilitychange", () => {
 const TARGET_BYTES = 900 * 1024;        // maqsad: ~900 KB
 const HARD_MAX_BYTES = 10 * 1024 * 1024; // server ham shu chegarani qo'llaydi
 const MAX_DIMENSION = 1920;
+const MAX_PHOTOS_PER_SECTION = 10;      // backend (MAX_PHOTOS_PER_SECTION) bilan bir xil
 
 // Worker kodi — alohida fayl sifatida joylashtirishning hojati yo'q,
 // Blob URL orqali shu yerdan yaratiladi (bitta fayl bilan deploy).
@@ -1032,6 +1033,14 @@ async function handlePickedFiles(fileList) {
   const sectionId = activeSectionId;
   const existingComment = state.photos[sectionId][0]?.comment || "";
 
+  // Bo'limda bo'sh joy qadar rasm qabul qilinadi (yuklanayotganlar ham sanaladi).
+  const freeSlots = Math.max(0, MAX_PHOTOS_PER_SECTION - state.photos[sectionId].length);
+  if (files.length > freeSlots) {
+    files.length = freeSlots;
+    await showAlert(t("error_photo_limit", { n: MAX_PHOTOS_PER_SECTION }));
+    if (!files.length) return;
+  }
+
   for (const rawFile of files) {
     let file;
     try {
@@ -1071,7 +1080,8 @@ async function handlePickedFiles(fileList) {
       // 429 (juda ko'p so'rov) va 413 (juda katta rasm) uchun alohida,
       // tushunarli xabar — ilgari hammasi umumiy "xatolik" edi.
       const msg = String(err && err.message || "");
-      if (msg.includes("429")) await showAlert(t("error_too_many"));
+      if (msg.includes("PHOTO_LIMIT")) await showAlert(t("error_photo_limit", { n: MAX_PHOTOS_PER_SECTION }));
+      else if (msg.includes("429")) await showAlert(t("error_too_many"));
       else if (msg.includes("413")) await showAlert(t("error_photo_too_large"));
       else await showAlert(t("error_submit"));
     }
@@ -1149,9 +1159,9 @@ function renderSectionCard(sectionId) {
     </div>
     <div class="photos-row">
       ${thumbsHtml}
-      <button class="add-photo-btn" data-section-id="${sectionId}">
+      ${photos.length < MAX_PHOTOS_PER_SECTION ? `<button class="add-photo-btn" data-section-id="${sectionId}">
         ${iconMarkup("plus")}<span>${esc(t("add_photo_btn"))}</span>
-      </button>
+      </button>` : ""}
     </div>
     ${isDone ? `<textarea class="comment-input" rows="2" placeholder="${esc(t("comment_placeholder"))}"></textarea>` : ""}
   `;
@@ -1161,7 +1171,9 @@ function renderSectionCard(sectionId) {
   const commentBox = card.querySelector(".comment-input");
   if (commentBox) commentBox.value = photos[0].comment || "";
 
-  card.querySelector(".add-photo-btn").addEventListener("click", () => {
+  const addBtn = card.querySelector(".add-photo-btn");
+  if (addBtn) addBtn.addEventListener("click", () => {
+    if (state.photos[sectionId].length >= MAX_PHOTOS_PER_SECTION) return;
     activeSectionId = sectionId;
     openCameraCapture();
   });
@@ -1308,11 +1320,30 @@ async function flushAllComments() {
   if (jobs.length) await Promise.allSettled(jobs);
 }
 
+// Yuklanayotgan rasmlar tugamaguncha "Yuborish"ni kutamiz — aks holda
+// oxirgi rasm serverdagi qoralamaga tushmay, hisobot chala ketardi.
+async function waitForUploads(maxMs = 90000) {
+  const pending = () => Object.values(state.photos).some((arr) => (arr || []).some((p) => p.uploading));
+  const t0 = Date.now();
+  while (pending()) {
+    if (Date.now() - t0 > maxMs) return false;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return true;
+}
+
 async function submitReport() {
   showLoading(t("loading_sending"));
   tg.MainButton.showProgress();
 
   try {
+    if (!(await waitForUploads())) {
+      throw new Error(t("error_too_many"));
+    }
+    // Yuklash paytida biror rasm xato bilan olib tashlangan bo'lishi mumkin.
+    if (!isReportComplete()) {
+      throw new Error(t("alert_incomplete", { n: state.sections.filter((s) => !(state.photos[s.id] || []).length).length }));
+    }
     await flushAllComments();
     // E'TIBOR: rasmlar bu yerda YUKLANMAYDI — ular xodim rasm olgan
     // zahoti /api/draft/photo orqali allaqachon serverga saqlangan.
@@ -1332,8 +1363,17 @@ async function submitReport() {
     // tushishiga olib kelardi. Endi so'rov juda yengil (server faqat
     // navbatga yozadi, ~0.2 s), shuning uchun bitta urinish yetarli;
     // ulanish umuman o'rnatilmasa bir marta qayta uriniladi.
-    const res = await fetchWithRetry(`${API_BASE}/api/submit`,
-      { method: "POST", body: formData }, 1, 1200, 30000, false);
+    // 429 (juda ko'p so'rov) bo'lsa — xodimga xato ko'rsatmasdan, serverning
+    // Retry-After vaqtini kutib, o'zimiz qayta yuboramiz (server bu holatda
+    // hech narsa qabul qilmagan, shuning uchun dublikat xavfi yo'q).
+    let res;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      res = await fetchWithRetry(`${API_BASE}/api/submit`,
+        { method: "POST", body: formData }, 1, 1200, 30000, false);
+      if (res.status !== 429) break;
+      const wait = Math.min(15, parseInt(res.headers.get("Retry-After") || "3", 10) || 3);
+      await new Promise((r) => setTimeout(r, (wait + 0.5) * 1000));
+    }
 
     if (!res.ok) {
       const bodyText = await res.text();
