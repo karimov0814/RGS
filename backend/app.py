@@ -1380,6 +1380,19 @@ async def admin_set_filial_active(
 #  StaticFiles faqat qolgan (mos kelmagan) yo'llarni, jumladan "/" ni
 #  (html=True → index.html) ushlaydi.
 # ============================================================
+# Telegram (ayniqsa iOS WKWebView) app.js/i18n.js/style.css ni agressiv keshlaydi:
+# deploydan keyin xodimlar ESKI frontend bilan YANGI backendga ulanib qolardi
+# (masalan, rasm chegarasi backendda bor, lekin tugma hali yo'qolmasdi).
+# `no-cache` — brauzer har safar ETag bilan tekshiradi; o'zgarmagan bo'lsa 304
+# (tez), o'zgargan bo'lsa yangisini oladi.
+@app.middleware("http")
+async def _no_stale_frontend(request: Request, call_next):
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(_STATIC_DIR):
     app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
