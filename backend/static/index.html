@@ -5,15 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <title>RGS</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
 <!-- Til almashtirgich: doim yuqori burchakda ko'rinadi (xodim va admin panellarida) -->
 <div id="lang-switcher" class="lang-switcher">
-  <button class="lang-btn" data-lang="uz">UZ</button>
-  <button class="lang-btn" data-lang="ru">RU</button>
-  <button class="lang-btn" data-lang="en">EN</button>
+  <button type="button" id="lang-trigger" class="lang-trigger" aria-haspopup="listbox" aria-expanded="false" aria-label="Til / Язык / Language">
+    <svg class="lang-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9S14.5 18.3 12 21c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z"/></svg><span id="lang-current">UZ</span><svg class="lang-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+  </button>
+  <div id="lang-menu" class="lang-menu hidden" role="listbox" aria-label="Til / Язык / Language">
+    <button type="button" class="lang-btn" role="option" data-lang="uz"><span>O'zbekcha</span><svg class="lang-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4.5 4.5L19 8"/></svg></button>
+    <button type="button" class="lang-btn" role="option" data-lang="ru"><span>Русский</span><svg class="lang-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4.5 4.5L19 8"/></svg></button>
+    <button type="button" class="lang-btn" role="option" data-lang="en"><span>English</span><svg class="lang-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4.5 4.5L19 8"/></svg></button>
+  </div>
 </div>
 
 <div id="app">

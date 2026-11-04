@@ -49,6 +49,7 @@ const TRANSLATIONS = {
     add_photo_btn: "Rasm qo'shish",
     camera_permission_denied: "Kameraga ruxsat berilmadi yoki u mavjud emas. Fayl tanlash ekrani ochiladi.",
     photo_count: "{n} ta rasm",
+    take_photo_btn: "Rasm olish",
     comment_placeholder: "Izoh (ixtiyoriy)",
 
     success_title: "Yuborildi!",
@@ -190,6 +191,7 @@ const TRANSLATIONS = {
     add_photo_btn: "Добавить фото",
     camera_permission_denied: "Доступ к камере не предоставлен или она недоступна. Откроется выбор файла.",
     photo_count: "{n} фото",
+    take_photo_btn: "Сделать фото",
     comment_placeholder: "Комментарий (необязательно)",
 
     success_title: "Отправлено!",
@@ -331,6 +333,7 @@ const TRANSLATIONS = {
     add_photo_btn: "Add photo",
     camera_permission_denied: "Camera access was denied or is unavailable. Opening file picker instead.",
     photo_count: "{n} photo(s)",
+    take_photo_btn: "Take photo",
     comment_placeholder: "Comment (optional)",
 
     success_title: "Sent!",
@@ -485,14 +488,45 @@ function applyStaticTranslations() {
 
 function updateLangSwitcherUI() {
   document.querySelectorAll(".lang-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.lang === currentLang);
+    const on = btn.dataset.lang === currentLang;
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-selected", on ? "true" : "false");
   });
+  const cur = document.getElementById("lang-current");
+  if (cur) cur.textContent = currentLang.toUpperCase();
+}
+
+// Til tanlash — dropdown: tugma bosilganda menyu ochiladi, til tanlansa,
+// tashqariga bosilsa yoki Escape bosilsa yopiladi.
+function setLangMenuOpen(open) {
+  const menu = document.getElementById("lang-menu");
+  const trigger = document.getElementById("lang-trigger");
+  if (!menu || !trigger) return;
+  menu.classList.toggle("hidden", !open);
+  trigger.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
 function initLangSwitcher() {
+  const trigger = document.getElementById("lang-trigger");
+  const menu = document.getElementById("lang-menu");
   document.querySelectorAll(".lang-btn").forEach((btn) => {
-    btn.addEventListener("click", () => setLang(btn.dataset.lang));
+    btn.addEventListener("click", () => {
+      setLang(btn.dataset.lang);
+      setLangMenuOpen(false);
+    });
   });
+  if (trigger && menu) {
+    trigger.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setLangMenuOpen(menu.classList.contains("hidden"));
+    });
+    document.addEventListener("click", (e) => {
+      if (!menu.classList.contains("hidden") && !menu.contains(e.target)) setLangMenuOpen(false);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") setLangMenuOpen(false);
+    });
+  }
   updateLangSwitcherUI();
 }
 

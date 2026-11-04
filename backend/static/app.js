@@ -11,6 +11,13 @@ const tg = window.Telegram.WebApp;
 tg.ready();
 tg.expand();
 
+// Telegram mavzusi (yorug'/qorong'i) — CSS dagi ranglar shunga moslashadi.
+function applyColorScheme() {
+  document.documentElement.dataset.scheme = tg.colorScheme === "dark" ? "dark" : "light";
+}
+applyColorScheme();
+if (typeof tg.onEvent === "function") tg.onEvent("themeChanged", applyColorScheme);
+
 const initData = tg.initData; // backendga validatsiya uchun yuboriladi
 
 // ============================================================
@@ -106,6 +113,20 @@ const ICONS = {
   drag: `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><circle cx="9" cy="12" r="1.4"/><circle cx="15" cy="12" r="1.4"/><circle cx="9" cy="18" r="1.4"/><circle cx="15" cy="18" r="1.4"/></svg>`,
   link: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15l6-6"/><path d="M10.5 7.5l1-1a3.5 3.5 0 0 1 5 5l-1 1"/><path d="M13.5 16.5l-1 1a3.5 3.5 0 0 1-5-5l1-1"/></svg>`,
 };
+
+Object.assign(ICONS, {
+  sun: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/></svg>`,
+  swap: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13M13 4l4 4-4 4M20 16H7M11 12l-4 4 4 4"/></svg>`,
+  moon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 019.5 4 8 8 0 1020 14.5z"/></svg>`,
+});
+const CHECKLIST_TYPE_ICON = { opening: "sun", handover: "swap", closing: "moon" };
+
+// Filial nomining dastlabki 2 harfi (monogramma): "Chilonzor" -> "Ch"
+function monogram(name) {
+  const chars = Array.from(String(name || "").trim());
+  if (!chars.length) return "•";
+  return (chars[0].toUpperCase() + (chars[1] || "").toLowerCase());
+}
 
 function iconMarkup(name) {
   return `<span class="icon">${ICONS[name] || ""}</span>`;
@@ -253,7 +274,7 @@ async function restoreDraftIfAny() {
 
     document.getElementById("filial-name-title").textContent = state.filial.name;
     document.getElementById("checklist-name-subtitle").textContent =
-      `${CHECKLIST_TYPE_EMOJI[state.checklistType.key] || "📋"} ${state.checklistType.name}`;
+      state.checklistType.name;
 
     hideLoading();
     renderSections();
@@ -385,7 +406,7 @@ function renderFilialList(filials) {
   filials.forEach((f) => {
     const el = document.createElement("div");
     el.className = "filial-item";
-    el.innerHTML = `<span>${esc(f.name)}</span><span class="arrow">${iconMarkup("chevron")}</span>`;
+    el.innerHTML = `<span class="monogram">${esc(monogram(f.name))}</span><span class="fi-name">${esc(f.name)}</span><span class="arrow">${iconMarkup("chevron")}</span>`;
     el.addEventListener("click", () => selectFilial(f));
     list.appendChild(el);
   });
@@ -473,7 +494,7 @@ function renderChecklistTypes() {
   state.checklistTypes.forEach((ct) => {
     const el = document.createElement("div");
     el.className = "filial-item";
-    el.innerHTML = `<span>${CHECKLIST_TYPE_EMOJI[ct.key] || "📋"} ${esc(ct.name)}</span><span class="arrow">${iconMarkup("chevron")}</span>`;
+    el.innerHTML = `<span class="monogram">${iconMarkup(CHECKLIST_TYPE_ICON[ct.key] || "building")}</span><span class="fi-name">${esc(ct.name)}</span><span class="arrow">${iconMarkup("chevron")}</span>`;
     el.addEventListener("click", () => selectChecklistType(ct));
     list.appendChild(el);
   });
@@ -580,7 +601,7 @@ async function selectChecklistType(checklistType) {
 
     document.getElementById("filial-name-title").textContent = state.filial.name;
     document.getElementById("checklist-name-subtitle").textContent =
-      `${CHECKLIST_TYPE_EMOJI[checklistType.key] || "📋"} ${checklistType.name}`;
+      checklistType.name;
 
     // Tanlov saqlanadi (KUTIB, ya'ni bo'limlar ekrani ko'rsatilishidan
     // OLDIN) — shu tufayli xodim bo'limlar ekraniga tushgan zahoti rasm
@@ -1155,12 +1176,17 @@ function renderSectionCard(sectionId) {
         <span class="section-status-icon">${isDone ? iconMarkup("check") : ""}</span>
         <span>${esc(sec.name)}</span>
       </div>
-      <span class="photo-count">${photos.length > 0 ? esc(t("photo_count", { n: photos.length })) : ""}</span>
+      <span class="photo-count">${photos.length > 0 ? esc(`${photos.length} / ${MAX_PHOTOS_PER_SECTION}`) : ""}</span>
     </div>
     <div class="photos-row">
       ${thumbsHtml}
-      ${photos.length < MAX_PHOTOS_PER_SECTION ? `<button class="add-photo-btn" data-section-id="${sectionId}">
-        ${iconMarkup("plus")}<span>${esc(t("add_photo_btn"))}</span>
+      ${photos.length === 0
+        ? `<button class="add-photo-btn add-photo-btn--wide" data-section-id="${sectionId}">
+        ${iconMarkup("camera")}<span>${esc(t("take_photo_btn"))}</span>
+      </button>`
+        : photos.length < MAX_PHOTOS_PER_SECTION
+          ? `<button class="add-photo-btn" data-section-id="${sectionId}" aria-label="${esc(t("add_photo_btn"))}">
+        ${iconMarkup("plus")}
       </button>` : ""}
     </div>
     ${isDone ? `<textarea class="comment-input" rows="2" placeholder="${esc(t("comment_placeholder"))}"></textarea>` : ""}
@@ -1234,8 +1260,9 @@ function updateProgress() {
 //  ustida nechta bo'lim qolgani yozilgan bo'ladi, to'lgach yashil
 //  "✅ Yuborish" bo'lib faollashadi.
 // ============================================================
-const MB_DISABLED_BG = "#9AA3AC";
-const MB_DISABLED_FG = "#F2F5F7";
+const isDarkScheme = () => tg.colorScheme === "dark";
+const MB_DISABLED_BG = isDarkScheme() ? "#3A3C41" : "#E6E6E2";
+const MB_DISABLED_FG = isDarkScheme() ? "#A3A6AD" : "#4B4D53";
 
 function isReportComplete() {
   const total = state.sections.length;
@@ -1255,8 +1282,8 @@ function attachMainButton() {
     return;
   }
 
-  const themeBg = (tg.themeParams && tg.themeParams.button_color) || "#1F7A5C";
-  const themeFg = (tg.themeParams && tg.themeParams.button_text_color) || "#FFFFFF";
+  const themeBg = isDarkScheme() ? "#E7D3A4" : "#16171A";
+  const themeFg = isDarkScheme() ? "#16171A" : "#FFFFFF";
 
   const params = remaining === 0
     ? { text: t("mainbutton_submit"), color: themeBg, text_color: themeFg,
@@ -1787,15 +1814,17 @@ async function initAdminSections() {
     }
     types.forEach((ct) => {
       const wrap = document.createElement("div");
-      wrap.className = "admin-checklist-tab-wrap";
+      wrap.className = "admin-checklist-tab-wrap" + (ct.id === adminSelectedChecklistTypeId ? " active" : "");
 
       const btn = document.createElement("button");
       btn.className = "admin-tab-btn" + (ct.id === adminSelectedChecklistTypeId ? " active" : "");
-      btn.textContent = `${CHECKLIST_TYPE_EMOJI[ct.key] || "📋"} ${pickLocalized(ct)}`;
+      btn.textContent = pickLocalized(ct);
       btn.addEventListener("click", () => {
         adminSelectedChecklistTypeId = ct.id;
         subtabsEl.querySelectorAll(".admin-tab-btn").forEach((b) => b.classList.remove("active"));
+        subtabsEl.querySelectorAll(".admin-checklist-tab-wrap").forEach((w) => w.classList.remove("active"));
         btn.classList.add("active");
+        wrap.classList.add("active");
         loadAdminSections();
       });
 
@@ -2099,7 +2128,7 @@ async function onLangChange() {
     await refetchSections();
     if (state.checklistType) {
       document.getElementById("checklist-name-subtitle").textContent =
-        `${CHECKLIST_TYPE_EMOJI[state.checklistType.key] || "📋"} ${state.checklistType.name}`;
+        state.checklistType.name;
     }
     renderSections();
   } else if (activeId === "screen-admin") {
